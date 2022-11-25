@@ -1556,9 +1556,9 @@ kj::Own<Server::Service> Server::makeWorker(kj::StringPtr name, config::Worker::
     (*inspector)->registerIsolate(name, isolate.get());
   }
 
-  auto script = isolate->newScript(name, WorkerdApiIsolate::extractSource(conf, errorReporter),
-                                   IsolateObserver::StartType::COLD,
-                                   false, errorReporter);
+  auto script = isolate->newScript(name,
+                                   WorkerdApiIsolate::extractSource(name, conf, errorReporter),
+                                   IsolateObserver::StartType::COLD, false, errorReporter);
 
   struct FutureSubrequestChannel {
     config::ServiceDesignator::Reader designator;

@@ -1787,6 +1787,8 @@ template <typename TypeWrapper>
 class Isolate;
 // Defined in setup.h -- most code doesn't need to use these directly.
 
+class AsyncResource;
+
 class Lock {
   // Represents an isolate lock, which allows the current thread to execute JavaScript code within
   // an isolate. A thread must lock an isolate -- obtaining an instance of `Lock` -- before it can
@@ -1993,6 +1995,12 @@ public:
 
   using Logger = void(Lock&, kj::StringPtr);
   void setLoggerCallback(kj::Function<Logger>&& logger);
+
+  // ---------------------------------------------------------------------------
+  // Async-context tracking stuff
+
+  uint64_t getNextAsyncResourceId();
+  kj::Maybe<AsyncResource&> tryGetAsyncResource(uint64_t id);
 
   // ---------------------------------------------------------------------------
   // Misc. Stuff

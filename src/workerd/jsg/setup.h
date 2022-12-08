@@ -101,6 +101,11 @@ public:
     KJ_IF_MAYBE(logger, maybeLogger) { (*logger)(js, message); }
   }
 
+  uint64_t getNextAsyncResourceId() { return ++nextAsyncResourceId; }
+  void registerAsyncResource(AsyncResource& resource);
+  void unregisterAsyncResource(AsyncResource& resource);
+  kj::Maybe<AsyncResource&> tryGetAsyncResource(uint64_t id);
+
 private:
   template <typename TypeWrapper>
   friend class Isolate;
@@ -233,10 +238,14 @@ private:
   void pushAsyncResource(AsyncResource& next);
   void popAsyncResource();
 
-  uint64_t getNextAsyncResourceId() { return ++nextAsyncResourceId; }
+  struct AsyncResourceEntry {
+    AsyncResource* resource;
+    kj::Maybe<kj::Own<Wrappable>> maybeStrongRef;
+  };
 
   uint64_t nextAsyncResourceId = 0;
-  std::deque<AsyncResource*> asyncResourceStack;
+  std::deque<AsyncResourceEntry> asyncResourceStack;
+  kj::HashMap<uint64_t, AsyncResource*> asyncResourcesMap;
   AsyncResource rootAsyncResource;
 
   friend class AsyncResource;

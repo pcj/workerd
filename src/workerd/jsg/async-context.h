@@ -1,3 +1,6 @@
+// Copyright (c) 2017-2022 Cloudflare, Inc.
+// Licensed under the Apache 2.0 license found in the LICENSE file or at:
+//     https://opensource.org/licenses/Apache-2.0
 #pragma once
 
 #include "jsg.h"
@@ -5,22 +8,23 @@
 
 namespace workerd::jsg {
 
-// Provides for basic internal async context tracking. Eventually, it is expected that
-// this will be provided by V8 assuming that the AsyncContext proposal advances through
-// TC-39. For now, however, we implement a model that is very similar to that implemented
-// by Node.js.
-
 class AsyncResource {
+  // Provides for basic internal async context tracking. Eventually, it is expected that
+  // this will be provided by V8 assuming that the AsyncContext proposal advances through
+  // TC-39. For now, however, we implement a model that is very similar to that implemented
+  // by Node.js.
 public:
   const uint64_t id;
   const kj::Maybe<uint64_t> parentId;
 
-  inline explicit AsyncResource() : id(0) {}
-
-  explicit AsyncResource(
+  AsyncResource(
       Lock& js,
       uint64_t id,
       kj::Maybe<AsyncResource&> maybeParent = nullptr);
+
+  ~AsyncResource() noexcept(false);
+
+  virtual kj::Maybe<kj::Own<Wrappable>> maybeGetStrongRef() { return nullptr; }
 
   static AsyncResource& current(Lock& js);
 
@@ -28,7 +32,8 @@ public:
   // Create a new AsyncResource. If maybeParent is not specified, uses the current().
 
   static v8::Local<v8::Function> wrap(Lock& js, v8::Local<v8::Function> fn,
-                                      kj::Maybe<AsyncResource&> maybeParent = nullptr);
+                                      kj::Maybe<AsyncResource&> maybeParent = nullptr,
+                                      kj::Maybe<v8::Local<v8::Value>> thisArg = nullptr);
   // Treats the given JavaScript function as an async resource and returns a wrapper
   // function that will ensure appropriate propagation of the async context tracking
   // when the wrapper function is called.
@@ -87,8 +92,12 @@ private:
   };
 
   Storage storage;
+  IsolateBase& isolate;
+
+  AsyncResource(IsolateBase& isolate);
 
   friend struct StorageScope;
+  friend class IsolateBase;
 };
 
 }  // namespace workerd::jsg

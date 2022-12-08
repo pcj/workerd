@@ -185,6 +185,21 @@ HeapTracer::HeapTracer(v8::Isolate* isolate): isolate(isolate) {
   }, this, v8::GCType::kGCTypeAll);
 }
 
+void IsolateBase::registerAsyncResource(AsyncResource& resource) {
+  asyncResourcesMap.insert(resource.id, &resource);
+}
+
+void IsolateBase::unregisterAsyncResource(AsyncResource& resource) {
+  asyncResourcesMap.erase(resource.id);
+}
+
+kj::Maybe<AsyncResource&> IsolateBase::tryGetAsyncResource(uint64_t id) {
+  KJ_IF_MAYBE(found, asyncResourcesMap.find(id)) {
+    return **found;
+  }
+  return nullptr;
+}
+
 void HeapTracer::destroy() {
   DISALLOW_KJ_IO_DESTRUCTORS_SCOPE;
   KJ_DEFER(isolate = nullptr);
@@ -248,7 +263,8 @@ namespace {
 IsolateBase::IsolateBase(const V8System& system, v8::Isolate::CreateParams&& createParams)
     : system(system),
       ptr(newIsolate(kj::mv(createParams))),
-      heapTracer(ptr) {
+      heapTracer(ptr),
+      rootAsyncResource(*this) {
   v8::CppHeapCreateParams params {
     .wrapper_descriptor = v8::WrapperDescriptor(
         Wrappable::WRAPPABLE_TAG_FIELD_INDEX,
@@ -274,7 +290,7 @@ IsolateBase::IsolateBase(const V8System& system, v8::Isolate::CreateParams&& cre
   ptr->AttachCppHeap(cppgcHeap.get());
   ptr->SetEmbedderRootsHandler(&heapTracer);
 
-  asyncResourceStack.push_front(&rootAsyncResource);
+  asyncResourceStack.push_front({&rootAsyncResource});
 
   ptr->SetFatalErrorHandler(&fatalError);
   ptr->SetOOMErrorHandler(&oomError);

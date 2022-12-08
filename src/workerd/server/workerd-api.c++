@@ -314,6 +314,10 @@ kj::Own<jsg::ModuleRegistry> WorkerdApiIsolate::compileModules(
     }
   }
 
+  if (getFeatureFlags().getNodeJs18CompatExperimental()) {
+    api::node::registerNodeJsCompatModules(*modules, getFeatureFlags());
+  }
+
   jsg::setModulesForResolveCallback<JsgWorkerdIsolate_TypeWrapper>(lock, modules);
 
   return modules;

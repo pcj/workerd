@@ -7,6 +7,7 @@
 #include <kj/encoding.h>
 
 #include <workerd/api/system-streams.h>
+#include <workerd/jsg/async-context.h>
 #include <workerd/jsg/ser.h>
 #include <workerd/jsg/util.h>
 #include <workerd/io/trace.h>
@@ -479,7 +480,7 @@ v8::Local<v8::String> ServiceWorkerGlobalScope::atob(kj::String data, v8::Isolat
 }
 
 void ServiceWorkerGlobalScope::queueMicrotask(v8::Local<v8::Function> task, v8::Isolate* isolate) {
-  isolate->EnqueueMicrotask(task);
+  isolate->EnqueueMicrotask(jsg::AsyncResource::wrap(jsg::Lock::from(isolate), task));
 }
 
 v8::Local<v8::Value> ServiceWorkerGlobalScope::structuredClone(
@@ -516,7 +517,9 @@ TimeoutId::NumberType ServiceWorkerGlobalScope::setTimeout(
   auto timeoutId = IoContext::current().setTimeoutImpl(
     timeoutIdGenerator,
     /* repeats = */ false,
-    [function = function.addRef(isolate), argv = kj::mv(argv)](jsg::Lock& js) mutable {
+    [function = function.addRef(isolate),
+     argv = kj::mv(argv),
+     resource = jsg::AsyncResource::create(jsg::Lock::from(isolate))](jsg::Lock& js) mutable {
       auto isolate = js.v8Isolate;
       auto context = isolate->GetCurrentContext();
       auto localFunction = function.getHandle(isolate);
@@ -524,6 +527,8 @@ TimeoutId::NumberType ServiceWorkerGlobalScope::setTimeout(
         return arg.getHandle(isolate);
       };
       auto argc = localArgs.size();
+
+      jsg::AsyncResource::Scope scope(js, *resource);
 
       // Cast to void to discard the result value.
       (void)jsg::check(localFunction->Call(context, context->Global(), argc, &localArgs.front()));
@@ -547,7 +552,9 @@ TimeoutId::NumberType ServiceWorkerGlobalScope::setInterval(
   auto timeoutId = IoContext::current().setTimeoutImpl(
     timeoutIdGenerator,
     /* repeats = */ true,
-    [function = function.addRef(isolate), argv = kj::mv(argv)](jsg::Lock& js) mutable {
+    [function = function.addRef(isolate),
+     argv = kj::mv(argv),
+     resource = jsg::AsyncResource::create(jsg::Lock::from(isolate))](jsg::Lock& js) mutable {
       auto isolate = js.v8Isolate;
       auto context = isolate->GetCurrentContext();
       auto localFunction = function.getHandle(isolate);
@@ -555,6 +562,8 @@ TimeoutId::NumberType ServiceWorkerGlobalScope::setInterval(
         return arg.getHandle(isolate);
       };
       auto argc = localArgs.size();
+
+      jsg::AsyncResource::Scope scope(js, *resource);
 
       // Cast to void to discard the result value.
       (void)jsg::check(localFunction->Call(context, context->Global(), argc, &localArgs.front()));

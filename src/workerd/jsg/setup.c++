@@ -8,6 +8,7 @@
 #endif
 
 #include "setup.h"
+#include "async-context.h"
 #include <cxxabi.h>
 #include "libplatform/libplatform.h"
 #include <ucontext.h>
@@ -273,6 +274,8 @@ IsolateBase::IsolateBase(const V8System& system, v8::Isolate::CreateParams&& cre
   ptr->AttachCppHeap(cppgcHeap.get());
   ptr->SetEmbedderRootsHandler(&heapTracer);
 
+  asyncResourceStack.push_front(&rootAsyncResource);
+
   ptr->SetFatalErrorHandler(&fatalError);
   ptr->SetOOMErrorHandler(&oomError);
 
@@ -307,6 +310,8 @@ IsolateBase::IsolateBase(const V8System& system, v8::Isolate::CreateParams&& cre
         break;
     }
   });
+
+  ptr->SetPromiseHook(&promiseHook);
 
   // Create opaqueTemplate
   {

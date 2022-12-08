@@ -6,10 +6,12 @@
 // Public API for setting up JavaScript context. Only high-level code needs to include this file.
 
 #include "jsg.h"
+#include "async-context.h"
 #include "type-wrapper.h"
 #include <workerd/util/batch-queue.h>
 #include <kj/map.h>
 #include <kj/mutex.h>
+#include <deque>
 
 namespace workerd::jsg {
 
@@ -224,6 +226,20 @@ private:
   // use `->InstanceTemplate()->NewInstance()` to construct an object, and you can pass this to
   // `FindInstanceInPrototypeChain()` on an existing object to check whether it was created using
   // this template.
+
+  static void promiseHook(v8::PromiseHookType type,
+                          v8::Local<v8::Promise> promise,
+                          v8::Local<v8::Value> parent);
+  void pushAsyncResource(AsyncResource& next);
+  void popAsyncResource();
+
+  uint64_t getNextAsyncResourceId() { return ++nextAsyncResourceId; }
+
+  uint64_t nextAsyncResourceId = 0;
+  std::deque<AsyncResource*> asyncResourceStack;
+  AsyncResource rootAsyncResource;
+
+  friend class AsyncResource;
 };
 
 kj::Maybe<kj::StringPtr> getJsStackTrace(void* ucontext, kj::ArrayPtr<char> scratch);

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <workerd/jsg/jsg.h>
+#include <workerd/io/compatibility-date.h>
 #include <workerd/jsg/async-context.h>
 #include <kj/table.h>
 
@@ -53,12 +54,24 @@ public:
     KJ_UNIMPLEMENTED("asyncLocalStorage.disable() is not implemented");
   }
 
-  JSG_RESOURCE_TYPE(AsyncLocalStorage) {
+  JSG_RESOURCE_TYPE(AsyncLocalStorage, CompatibilityFlags::Reader flags) {
     JSG_METHOD(run);
     JSG_METHOD(exit);
     JSG_METHOD(getStore);
     JSG_METHOD(enterWith);
     JSG_METHOD(disable);
+
+    if (flags.getNodeJs18CompatExperimental()) {
+      JSG_TS_OVERRIDE(AsyncLocalStorage<T> {
+        getStore(): T | undefined;
+        run<R, TArgs extends any[]>(store: T, callback: (...args: TArgs) => R, ...args: TArgs): R;
+        exit<R, TArgs extends any[]>(callback: (...args: TArgs) => R, ...args: TArgs): R;
+        disable(): void;
+        enterWith(store: T): void;
+      });
+    } else {
+      JSG_TS_OVERRIDE(type AsyncLocalStorage = never);
+    }
   }
 
 private:
@@ -91,6 +104,7 @@ public:
     // Node.js also has an additional `requireManualDestroy` boolean option
     // that we do not implement.
 
+    JSG_STRUCT_TS_OVERRIDE(type AsyncResourceOptions = never);
     JSG_STRUCT(triggerAsyncId);
   };
 
@@ -122,12 +136,34 @@ public:
                                        jsg::Varargs args);
   // Calls the given function within this async context.
 
-  JSG_RESOURCE_TYPE(AsyncResource) {
+  JSG_RESOURCE_TYPE(AsyncResource, CompatibilityFlags::Reader flags) {
     JSG_STATIC_METHOD_NAMED(bind, staticBind);
     JSG_METHOD(asyncId);
     JSG_METHOD(triggerAsyncId);
     JSG_METHOD(bind);
     JSG_METHOD(runInAsyncScope);
+
+    if (flags.getNodeJs18CompatExperimental()) {
+      JSG_TS_OVERRIDE(interface AsyncResourceOptions {
+        triggerAsyncId?: number;
+      });
+
+      JSG_TS_OVERRIDE(AsyncResource {
+        constructor(type: string, triggerAsyncId?: number | AsyncResourceOptions);
+        static bind<Func extends (this: ThisArg, ...args: any[]) => any, ThisArg>(
+            fn: Func,
+            type?: string,
+            thisArg?: ThisArg): Func & { asyncResource: AsyncResource; };
+        bind<Func extends (...args: any[]) => any>(
+            fn: Func ): Func & { asyncResource: AsyncResource; };
+        runInAsyncScope<This, Result>(fn: (this: This, ...args: any[]) => Result, thisArg?: This,
+                                      ...args: any[]): Result;
+        asyncId(): number;
+        triggerAsyncId(): number;
+      });
+    } else {
+      JSG_TS_OVERRIDE(type AsyncResource = never);
+    }
   }
 
 private:
@@ -146,11 +182,21 @@ public:
   uint64_t executionAsyncId(jsg::Lock& js);
   uint64_t triggerAsyncId(jsg::Lock& js);
 
-  JSG_RESOURCE_TYPE(AsyncHooksModule) {
+  JSG_RESOURCE_TYPE(AsyncHooksModule, CompatibilityFlags::Reader flags) {
     JSG_NESTED_TYPE(AsyncLocalStorage);
     JSG_NESTED_TYPE(AsyncResource);
     JSG_METHOD(executionAsyncId);
     JSG_METHOD(triggerAsyncId);
+
+    if (flags.getNodeJs18CompatExperimental()) {
+      JSG_TS_ROOT();
+      JSG_TS_OVERRIDE(AsyncHooksModule {
+        executionAsyncId(): number;
+        triggerAsyncId(): number;
+      });
+    } else {
+      JSG_TS_OVERRIDE(type AsyncHooksModule = never);
+    }
   }
 };
 

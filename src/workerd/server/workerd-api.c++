@@ -18,7 +18,7 @@
 #include <workerd/api/r2.h>
 #include <workerd/api/r2-admin.h>
 #include <workerd/api/urlpattern.h>
-#include <workerd/api/node/async-hooks.h>
+#include <workerd/api/node/node.h>
 #include <workerd/util/thread-scopes.h>
 #include <openssl/sha.h>
 #include <openssl/hmac.h>
@@ -64,7 +64,7 @@ JSG_DECLARE_ISOLATE_TYPE(JsgWorkerdIsolate,
   EW_URL_STANDARD_ISOLATE_TYPES,
   EW_URLPATTERN_ISOLATE_TYPES,
   EW_WEBSOCKET_ISOLATE_TYPES,
-  EW_NODE_ASYNCHOOKS_ISOLATE_TYPES,
+  EW_NODE_ISOLATE_TYPES,
 
   jsg::TypeWrapperExtension<PromiseWrapper>,
   jsg::InjectConfiguration<CompatibilityFlags::Reader>,

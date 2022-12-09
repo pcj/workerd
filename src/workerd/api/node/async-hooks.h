@@ -94,9 +94,37 @@ private:
 
 
 class AsyncResource final: public jsg::Object, public jsg::AsyncResource {
-  // The AsyncResource API allows applications to define their own Async contexts.
-  // For instance, if user code is using custom thenables instead of native promises,
-  // or user code wishes to attach event listeners to async contexts.
+  // The AsyncResource class is an object that user code can use to define its own
+  // async resources for the purpose of storage context propagation. For instance,
+  // lets imagine that we have an EventTarget and we want to register two event listeners
+  // on it that will share the same AsyncLocalStorage context. We can use AsyncResource
+  // to easily define the context and bind multiple event handler functions to it:
+  //
+  //   const als = new AsyncLocalStorage();
+  //   const context = als.run(123, () => new AsyncResource('foo'));
+  //   const target = new EventTarget();
+  //   target.addEventListener('abc', context.bind(() => console.log(als.getStore())));
+  //   target.addEventListener('xyz', context.bind(() => console.log(als.getStore())));
+  //   target.addEventListener('bar', () => console.log(als.getStore()));
+  //
+  // When the 'abc' and 'xyz' events are emitted, their event handlers will print 123
+  // to the console. When the 'bar' event is emitted, undefined will be printed.
+  //
+  // Alternatively, we can use EventTarget's object event handler:
+  //
+  //   const als = new AsyncLocalStorage();
+  //
+  //   class MyHandler extends AsyncResource {
+  //     constructor() { super('foo'); }
+  //     void handleEvent() {
+  //       this.runInAsyncScope(() => console.log(als.getStore()));
+  //     }
+  //   }
+  //
+  //   const handler = als.run(123, () => new MyHandler());
+  //   const target = new EventTarget();
+  //   target.addEventListener('abc', handler);
+  //   target.addEventListener('xyz', handler);
 public:
   struct Options {
     jsg::Optional<uint64_t> triggerAsyncId;

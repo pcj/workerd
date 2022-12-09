@@ -13,6 +13,40 @@ class AsyncResource {
   // this will be provided by V8 assuming that the AsyncContext proposal advances through
   // TC-39. For now, however, we implement a model that is very similar to that implemented
   // by Node.js.
+  //
+  // The term "resource" here comes from Node.js, which really doesn't take the time to
+  // define it properly. Conceptually, an "async resource" is some Thing that generates
+  // asynchronous activity over time. For instance, a timer is an async resource that
+  // invokes a callback after a certain period of time elapses; a promise is an async
+  // resource that may trigger scheduling of a microtask at some point in the future,
+  // and so forth. Whether or not "resource" is the best term to use to describe these,
+  // it's what we have because our intent here is to stay aligned with Node.js' model
+  // as closely as possible.
+  //
+  // An async resource has an "execution context" or "execution scope". We enter the
+  // execution scope immediately before the async resource performs whatever action
+  // it is going to perform (e.g. invoking a callback), and exit the execution scope
+  // immediately after.
+  //
+  // Execution scopes form a stack. The default execution scope is the Root (which
+  // we label as id = 0). When we enter the execution scope of a different async resource,
+  // we push it onto the stack, perform whatever task it is, then pop it back off the
+  // stack. The Root is associated with the Isolate itself such that every isolate
+  // always has at least one async resource on the stack at all times.
+  //
+  // Every async resource has a storage context. Whatever async resource is currently
+  // at the top of the stack determines the currently active storage context. So, for
+  // instance, when we start executing, the Root async resource's storage context is
+  // active. When a timeout elapses and a timer is going to fire, we enter the timers
+  // execution scope which makes the timers storage context active. Once the timer
+  // callback has completed, we return back to the Root async resource's execution
+  // scope and storage context.
+  //
+  // All async resources (except for the Root) are created within the scope of a
+  // parent, which by default is whichever async resource is at the top of the stack
+  // when the new resource is created.
+  //
+  // When the new resource is created, it inherits the storage context of the parent.
 public:
   const uint64_t id;
   const kj::Maybe<uint64_t> parentId;

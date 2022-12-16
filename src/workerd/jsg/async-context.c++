@@ -63,6 +63,12 @@ AsyncResource::~AsyncResource() noexcept(false) {
   isolate.unregisterAsyncResource(*this);
 }
 
+kj::Maybe<AsyncResource&> AsyncResource::tryUnwrap(Lock& js, V8Ref<v8::Promise>& promise) {
+  auto handle = v8::Private::ForApi(js.v8Isolate, v8StrIntern(js.v8Isolate, "asyncResource"));
+  auto obj = check(promise.getHandle(js)->GetPrivate(js.v8Isolate->GetCurrentContext(), handle));
+  return AsyncResourceWrappable::tryUnwrap(js.v8Isolate, obj);
+}
+
 AsyncResource& AsyncResource::current(Lock& js) {
   auto& isolateBase = IsolateBase::from(js.v8Isolate);
   KJ_ASSERT(!isolateBase.asyncResourceStack.empty());
@@ -201,9 +207,7 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
 
   // V8 will call the promise hook even while execution is terminating. In that
   // case we don't want to do anything here.
-  if (isolate->IsExecutionTerminating() ||
-      isolate->IsDead() ||
-      type == v8::PromiseHookType::kResolve) {
+  if (isolate->IsExecutionTerminating() || isolate->IsDead()) {
     return;
   }
 
@@ -261,7 +265,7 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
       break;
     }
     case v8::PromiseHookType::kResolve: {
-      // There's nothing to do here.
+      trackPromise(promise, parent);
       break;
     }
   }

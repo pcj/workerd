@@ -179,15 +179,7 @@ class ServiceWorkerGlobalScope: public WorkerGlobalScope {
   // Global object API exposed to JavaScript.
 
 public:
-  ServiceWorkerGlobalScope(v8::Isolate* isolate)
-      : unhandledRejections(
-          [this](jsg::Lock& js,
-                 v8::PromiseRejectEvent event,
-                 jsg::V8Ref<v8::Promise> promise,
-                 jsg::Value value) {
-            auto ev = jsg::alloc<PromiseRejectionEvent>(event, kj::mv(promise), kj::mv(value));
-            dispatchEventImpl(js, kj::mv(ev));
-          }) {}
+  ServiceWorkerGlobalScope(v8::Isolate* isolate);
 
   void clear();
   // Drop all references to JavaScript objects so that the context can be garbage-collected. Call

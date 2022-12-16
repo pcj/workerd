@@ -97,6 +97,18 @@ void ExecutionContext::passThroughOnException() {
   IoContext::current().setFailOpen();
 }
 
+ServiceWorkerGlobalScope::ServiceWorkerGlobalScope(v8::Isolate* isolate)
+    : unhandledRejections(
+        [this](jsg::Lock& js,
+                v8::PromiseRejectEvent event,
+                jsg::V8Ref<v8::Promise> promise,
+                jsg::Value value) {
+          jsg::AsyncResource::Scope scope(js,
+              KJ_ASSERT_NONNULL(jsg::AsyncResource::tryUnwrap(js, promise)));
+          auto ev = jsg::alloc<PromiseRejectionEvent>(event, kj::mv(promise), kj::mv(value));
+          dispatchEventImpl(js, kj::mv(ev));
+        }) {}
+
 void ServiceWorkerGlobalScope::clear() {
   removeAllHandlers();
   unhandledRejections.clear();

@@ -56,7 +56,7 @@ public:
       uint64_t id,
       kj::Maybe<AsyncResource&> maybeParent = nullptr);
 
-  ~AsyncResource() noexcept(false);
+  virtual ~AsyncResource() noexcept(false);
 
   virtual kj::Maybe<kj::Own<Wrappable>> maybeGetStrongRef() { return nullptr; }
 
@@ -64,6 +64,8 @@ public:
 
   static kj::Own<AsyncResource> create(Lock& js, kj::Maybe<AsyncResource&> maybeParent = nullptr);
   // Create a new AsyncResource. If maybeParent is not specified, uses the current().
+
+  static kj::Maybe<AsyncResource&> tryUnwrap(Lock& js, V8Ref<v8::Promise>& promise);
 
   static v8::Local<v8::Function> wrap(Lock& js, v8::Local<v8::Function> fn,
                                       kj::Maybe<AsyncResource&> maybeParent = nullptr,

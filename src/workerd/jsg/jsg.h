@@ -297,6 +297,36 @@ private:
 //
 //     JSG_METHOD_NAMED(delete, delete_);
 
+#define JSG_METHOD_UNBOUND(name) \
+  do { \
+    static const char NAME[] = #name; \
+    registry.template registerMethodWithoutSignature<NAME, decltype(Self::name), &Self::name>(); \
+  } while (false)
+// Like JSG_METHOD except that while the method is attached to the prototype, it is not bound
+// to the `this`. This specifically allows for using such methods in JavaScript using destructuring
+// assignment, for instance:
+//   const { foo } = object;
+//   foo();
+//
+// With JSG_METHOD, such a method call would error with an "illegal invocation" error.
+//
+// Such methods MUST be static on the resource type.
+
+#define JSG_METHOD_UNBOUND_NAMED(name, method) \
+  do { \
+    static const char NAME[] = #name; \
+    registry.template registerMethodWithoutSignature<NAME, decltype(Self::name), &Self::name>(); \
+  } while (false)
+// Like JSG_METHOD except that while the method is attached to the prototype, it is not bound
+// to the `this`. This specifically allows for using such methods in JavaScript using destructuring
+// assignment, for instance:
+//   const { foo } = object;
+//   foo();
+//
+// With JSG_METHOD, such a method call would error with an "illegal invocation" error.
+//
+// Such methods MUST be static on the resource type.
+
 #define JSG_STATIC_METHOD(name) \
   do { \
     static const char NAME[] = #name; \

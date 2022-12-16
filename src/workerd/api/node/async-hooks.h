@@ -207,14 +207,14 @@ class AsyncHooksModule final: public jsg::Object {
   // Node.js.
 public:
 
-  uint64_t executionAsyncId(jsg::Lock& js);
-  uint64_t triggerAsyncId(jsg::Lock& js);
+  static uint64_t executionAsyncId(jsg::Lock& js);
+  static uint64_t triggerAsyncId(jsg::Lock& js);
 
   JSG_RESOURCE_TYPE(AsyncHooksModule, CompatibilityFlags::Reader flags) {
     JSG_NESTED_TYPE(AsyncLocalStorage);
     JSG_NESTED_TYPE(AsyncResource);
-    JSG_METHOD(executionAsyncId);
-    JSG_METHOD(triggerAsyncId);
+    JSG_METHOD_UNBOUND(executionAsyncId);
+    JSG_METHOD_UNBOUND(triggerAsyncId);
 
     if (flags.getNodeJs18CompatExperimental()) {
       JSG_TS_ROOT();

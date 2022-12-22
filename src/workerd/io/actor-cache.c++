@@ -2646,7 +2646,6 @@ kj::Promise<void> ActorCache::flushImplUsingTxn(
     });
 
     for (auto& flush: countedDeleteFlushes) {
-      KJ_ASSERT(flush.batches.size() == 1);
       auto entryIt = flush.entries.begin();
       for (auto& batch: flush.batches) {
         KJ_ASSERT(batch.wordCount < MAX_ACTOR_STORAGE_RPC_WORDS);

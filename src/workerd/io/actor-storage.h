@@ -3,6 +3,8 @@
 #include <kj/common.h>
 #include <kj/string.h>
 
+#include <capnp/common.h>
+
 #include <workerd/io/actor-storage.capnp.h>
 
 namespace workerd {
@@ -29,6 +31,39 @@ public:
   static void checkMaxKeySize(kj::StringPtr key);
   static void checkMaxValueSize(kj::StringPtr key, kj::ArrayPtr<kj::byte> value);
   static void checkMaxPairsCount(size_t count);
+};
+
+template<typename ClientT>
+class ActorStorage {
+public:
+  ActorStorage(ClientT client): client(kj::mv(client)) {}
+
+  template<typename ContainerT>
+  auto deleteRequest(const ContainerT& keys) {
+    ActorStorageLimits::checkMaxPairsCount(keys.size());
+
+    size_t totalSize = 0;
+    for (auto& key : keys) {
+      totalSize += key.size();
+    }
+
+    auto request = client.deleteRequest(capnp::MessageSize{
+      .wordCount = 4 + (totalSize / sizeof(capnp::word)),
+      .capCount = 0,
+    });
+    auto reqKeys = request.initKeys(keys.size());
+    for (size_t i = 0; i < keys.size(); ++i) {
+      reqKeys.set(i, keys[i].asBytes());
+    }
+    return request;
+  }
+
+  auto getClient() {
+    return client;
+  }
+
+private:
+  ClientT client;
 };
 
 } // namespace workerd

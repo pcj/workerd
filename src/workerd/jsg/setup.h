@@ -101,10 +101,7 @@ public:
     KJ_IF_MAYBE(logger, maybeLogger) { (*logger)(js, message); }
   }
 
-  uint64_t getNextAsyncResourceId() { return ++nextAsyncResourceId; }
-  void registerAsyncResource(AsyncResource& resource);
-  void unregisterAsyncResource(AsyncResource& resource);
-  kj::Maybe<AsyncResource&> tryGetAsyncResource(uint64_t id);
+  void setAsyncContextTrackingEnabled();
 
 private:
   template <typename TypeWrapper>
@@ -235,20 +232,16 @@ private:
   static void promiseHook(v8::PromiseHookType type,
                           v8::Local<v8::Promise> promise,
                           v8::Local<v8::Value> parent);
-  void pushAsyncResource(AsyncResource& next);
-  void popAsyncResource();
+  void pushAsyncFrame(AsyncContextFrame& next);
+  // Pushes the frame onto the stack making it current. Importantly, the stack
+  // does not maintain a refcounted reference to the frame so it is important
+  // for the caller to ensure that the frame is kept alive.
+  void popAsyncFrame();
 
-  struct AsyncResourceEntry {
-    AsyncResource* resource;
-    kj::Maybe<kj::Own<Wrappable>> maybeStrongRef;
-  };
+  std::deque<AsyncContextFrame*> asyncFrameStack;
+  kj::Own<AsyncContextFrame> rootAsyncFrame;
 
-  uint64_t nextAsyncResourceId = 0;
-  std::deque<AsyncResourceEntry> asyncResourceStack;
-  kj::HashMap<uint64_t, AsyncResource*> asyncResourcesMap;
-  AsyncResource rootAsyncResource;
-
-  friend class AsyncResource;
+  friend class AsyncContextFrame;
 };
 
 kj::Maybe<kj::StringPtr> getJsStackTrace(void* ucontext, kj::ArrayPtr<char> scratch);

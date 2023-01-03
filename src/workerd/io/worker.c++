@@ -985,6 +985,14 @@ Worker::Isolate::Isolate(kj::Own<ApiIsolate> apiIsolateParam,
   lock->setCaptureThrowsAsRejections(features.getCaptureThrowsAsRejections());
   lock->setCommonJsExportDefault(features.getExportCommonJsDefaultNamespace());
 
+  if (features.getNodeJs18CompatExperimental()) {
+    // Enabling async context tracking installs a relatively expensive callback on the v8 isolate
+    // that attaches additional metadata to every promise created. The additional metadata is used
+    // to implement support for the Node.js AsyncLocalStorage API. Since that is the only current
+    // use for it, we only install the promise hook when the nodejs compat flag is enabled.
+    lock->setAsyncContextTrackingEnabled();
+  }
+
   if (impl->inspector != nullptr || ::kj::_::Debug::shouldLog(::kj::LogSeverity::INFO)) {
     lock->setLoggerCallback([this](jsg::Lock& js, kj::StringPtr message) {
       if (impl->inspector != nullptr) {

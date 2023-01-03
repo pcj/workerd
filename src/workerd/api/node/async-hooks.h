@@ -30,7 +30,7 @@ class AsyncLocalStorage final: public jsg::Object {
   //   });
   //   console.log(als.getStore());  // undefined
 public:
-  AsyncLocalStorage() : key(kj::refcounted<Key>(*this)) {}
+  AsyncLocalStorage() : key(kj::refcounted<jsg::AsyncContextFrame::StorageKey>()) {}
   ~AsyncLocalStorage() noexcept(false) { key->reset(); }
 
   static jsg::Ref<AsyncLocalStorage> constructor();
@@ -75,28 +75,14 @@ public:
   }
 
 private:
-  class Key final: public jsg::AsyncResource::StorageKey {
-  public:
-    Key(AsyncLocalStorage& ref)
-        : ref(ref),
-          hash(kj::hashCode("AsyncLocalStorage"_kj, &ref)) {}
-
-    void reset() { ref = nullptr; }
-    bool isDead() const override { return ref == nullptr; }
-    uint hashCode() const override { return hash; }
-  private:
-    kj::Maybe<AsyncLocalStorage&> ref;
-    uint hash;
-  };
-
-  kj::Own<Key> key;
+  kj::Own<jsg::AsyncContextFrame::StorageKey> key;
 };
 
 
-class AsyncResource final: public jsg::Object, public jsg::AsyncResource {
+class AsyncResource final: public jsg::Object {
   // The AsyncResource class is an object that user code can use to define its own
   // async resources for the purpose of storage context propagation. For instance,
-  // lets imagine that we have an EventTarget and we want to register two event listeners
+  // let's imagine that we have an EventTarget and we want to register two event listeners
   // on it that will share the same AsyncLocalStorage context. We can use AsyncResource
   // to easily define the context and bind multiple event handler functions to it:
   //
@@ -127,41 +113,55 @@ class AsyncResource final: public jsg::Object, public jsg::AsyncResource {
   //   target.addEventListener('xyz', handler);
 public:
   struct Options {
-    jsg::Optional<uint64_t> triggerAsyncId;
+    jsg::WontImplement triggerAsyncId;
+    // Node.js' API allows user code to create AsyncResource instances within an
+    // explicitly specified parent execution context (what we call an "Async Context
+    // Frame") that is specified by a numeric ID. We do not track our context frames
+    // by ID and always create new AsyncResource instances within the current Async
+    // Context Frame. To prevent subtle bugs, we'll throw explicitly if user code
+    // tries to set the triggerAsyncId option.
 
     // Node.js also has an additional `requireManualDestroy` boolean option
-    // that we do not implement.
+    // that we do not implement. We can simply omit it here. There's no risk of
+    // bugs or unexpected behavior by doing so.
 
     JSG_STRUCT_TS_OVERRIDE(type AsyncResourceOptions = never);
     JSG_STRUCT(triggerAsyncId);
   };
 
-  AsyncResource(jsg::Lock& js, jsg::Optional<kj::String> type, jsg::Optional<Options> options);
+  AsyncResource(jsg::Lock& js);
 
   static jsg::Ref<AsyncResource> constructor(jsg::Lock& js, jsg::Optional<kj::String> type,
                                              jsg::Optional<Options> options = nullptr);
+  // While Node.js' API expects the first argument passed to the `new AsyncResource(...)`
+  // constructor to be a string specifying the resource type, we do not actually use it
+  // for anything. We'll just ignore the value and not store it, but we at least need to
+  // accept the argument and validate that it is a string.
 
-  uint64_t asyncId();
-  // This resource's id.
+  inline jsg::Unimplemented asyncId() { return {}; }
+  inline jsg::Unimplemented triggerAsyncId() { return {}; }
+  // The Node.js API uses numeric identifiers for all async resources. We do not
+  // implement that part of their API. To prevent subtle bugs, we'll throw explicitly.
 
-  uint64_t triggerAsyncId();
-  // The parent resource's id.
+  static v8::Local<v8::Function> staticBind(
+      jsg::Lock& js,
+      v8::Local<v8::Function> fn,
+      jsg::Optional<kj::String> type,
+      jsg::Optional<v8::Local<v8::Value>> thisArg,
+      const jsg::TypeHandler<jsg::Ref<AsyncResource>>& handler);
 
-  static v8::Local<v8::Function> staticBind(jsg::Lock& js,
-                                            v8::Local<v8::Function> fn,
-                                            jsg::Optional<kj::String> type,
-                                            jsg::Optional<v8::Local<v8::Value>> thisArg,
-                                            const jsg::TypeHandler<jsg::Ref<AsyncResource>>& handler);
-  v8::Local<v8::Function> bind(jsg::Lock& js,
-                               v8::Local<v8::Function> fn,
-                               jsg::Optional<v8::Local<v8::Value>> thisArg,
-                               const jsg::TypeHandler<jsg::Ref<AsyncResource>>& handler);
+  v8::Local<v8::Function> bind(
+      jsg::Lock& js,
+      v8::Local<v8::Function> fn,
+      jsg::Optional<v8::Local<v8::Value>> thisArg,
+      const jsg::TypeHandler<jsg::Ref<AsyncResource>>& handler);
   // Binds the given function to this async context.
 
-  v8::Local<v8::Value> runInAsyncScope(jsg::Lock& js,
-                                       v8::Local<v8::Function> fn,
-                                       jsg::Optional<v8::Local<v8::Value>> thisArg,
-                                       jsg::Varargs args);
+  v8::Local<v8::Value> runInAsyncScope(
+      jsg::Lock& js,
+      v8::Local<v8::Function> fn,
+      jsg::Optional<v8::Local<v8::Value>> thisArg,
+      jsg::Varargs args);
   // Calls the given function within this async context.
 
   JSG_RESOURCE_TYPE(AsyncResource, CompatibilityFlags::Reader flags) {
@@ -177,7 +177,7 @@ public:
       });
 
       JSG_TS_OVERRIDE(AsyncResource {
-        constructor(type: string, triggerAsyncId?: number | AsyncResourceOptions);
+        constructor(type: string, options?: AsyncResourceOptions);
         static bind<Func extends (this: ThisArg, ...args: any[]) => any, ThisArg>(
             fn: Func,
             type?: string,
@@ -195,10 +195,7 @@ public:
   }
 
 private:
-  kj::String type;
-  // We currently do not make use of the type. With Node.js' implementation,
-  // the type name is reported via the async hook callback apis that we are
-  // not implementing.
+  kj::Own<jsg::AsyncContextFrame> frame;
 };
 
 class AsyncHooksModule final: public jsg::Object {
@@ -207,21 +204,13 @@ class AsyncHooksModule final: public jsg::Object {
   // Node.js.
 public:
 
-  static uint64_t executionAsyncId(jsg::Lock& js);
-  static uint64_t triggerAsyncId(jsg::Lock& js);
-
   JSG_RESOURCE_TYPE(AsyncHooksModule, CompatibilityFlags::Reader flags) {
     JSG_NESTED_TYPE(AsyncLocalStorage);
     JSG_NESTED_TYPE(AsyncResource);
-    JSG_METHOD_UNBOUND(executionAsyncId);
-    JSG_METHOD_UNBOUND(triggerAsyncId);
 
     if (flags.getNodeJs18CompatExperimental()) {
       JSG_TS_ROOT();
-      JSG_TS_OVERRIDE(AsyncHooksModule {
-        executionAsyncId(): number;
-        triggerAsyncId(): number;
-      });
+      JSG_TS_OVERRIDE(AsyncHooksModule {});
     } else {
       JSG_TS_OVERRIDE(type AsyncHooksModule = never);
     }

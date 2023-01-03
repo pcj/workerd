@@ -711,15 +711,6 @@ struct ResourceTypeBuilder {
   }
 
   template<const char* name, typename Method, Method method>
-  inline void registerMethodWithoutSignature() {
-    auto functionTemplate = v8::FunctionTemplate::New(isolate,
-        &StaticMethodCallback<TypeWrapper, name, Self, Method, method,
-                              ArgumentIndexes<Method>>::callback,
-        v8::Local<v8::Value>(), v8::Local<v8::Signature>(), 0, v8::ConstructorBehavior::kThrow);
-    prototype->Set(isolate, name, functionTemplate);
-  }
-
-  template<const char* name, typename Method, Method method>
   inline void registerStaticMethod() {
     auto v8Name = v8Str(isolate, name, v8::NewStringType::kInternalized);
     // Notably, we specify an empty signature because a static method invocation will have no holder

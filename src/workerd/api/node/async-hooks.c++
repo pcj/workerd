@@ -22,7 +22,7 @@ v8::Local<v8::Value> AsyncLocalStorage::run(
 
   auto context = js.v8Isolate->GetCurrentContext();
 
-  jsg::AsyncResource::StorageScope scope(js, *key, js.v8Ref(store));
+  jsg::AsyncContextFrame::StorageScope scope(js, *key, js.v8Ref(store));
 
   return jsg::check(callback->Call(
       context,
@@ -49,37 +49,24 @@ v8::Local<v8::Value> AsyncLocalStorage::exit(
 }
 
 v8::Local<v8::Value> AsyncLocalStorage::getStore(jsg::Lock& js) {
-  KJ_IF_MAYBE(value, jsg::AsyncResource::current(js).get(*key)) {
+  KJ_IF_MAYBE(value, jsg::AsyncContextFrame::current(js).get(*key)) {
     return value->getHandle(js);
   }
   return v8::Undefined(js.v8Isolate);
 }
 
-namespace {
-kj::Maybe<jsg::AsyncResource&> getParent(
+AsyncResource::AsyncResource(jsg::Lock& js)
+    : frame(kj::addRef(jsg::AsyncContextFrame::current(js))) {}
+
+jsg::Ref<AsyncResource> AsyncResource::constructor(
     jsg::Lock& js,
-    jsg::Optional<AsyncResource::Options>& maybeOptions) {
-  KJ_IF_MAYBE(options, maybeOptions) {
-    return js.tryGetAsyncResource(options->triggerAsyncId.orDefault(0));
-  }
-  return jsg::AsyncResource::current(js);
+    jsg::Optional<kj::String> type,
+    jsg::Optional<Options> options) {
+  // The type and options are required as part of the Node.js API compatibility
+  // but our implementation does not currently make use of them at all. It is ok
+  // for us to silently ignore both here.
+  return jsg::alloc<AsyncResource>(js);
 }
-}  // namespace
-
-AsyncResource::AsyncResource(jsg::Lock& js,
-                             jsg::Optional<kj::String> type,
-                             jsg::Optional<Options> options)
-    : jsg::AsyncResource(js, js.getNextAsyncResourceId(), getParent(js, options)),
-      type(kj::mv(type).orDefault([] { return kj::str("AsyncResource"); })) {}
-
-jsg::Ref<AsyncResource> AsyncResource::constructor(jsg::Lock& js,
-                                                   jsg::Optional<kj::String> type,
-                                                   jsg::Optional<Options> options) {
-  return jsg::alloc<AsyncResource>(js, kj::mv(type), kj::mv(options));
-}
-
-uint64_t AsyncResource::asyncId() { return id; }
-uint64_t AsyncResource::triggerAsyncId() { return parentId.orDefault(0); }
 
 v8::Local<v8::Function> AsyncResource::staticBind(
     jsg::Lock& js,
@@ -97,7 +84,8 @@ v8::Local<v8::Function> AsyncResource::bind(
     v8::Local<v8::Function> fn,
     jsg::Optional<v8::Local<v8::Value>> thisArg,
     const jsg::TypeHandler<jsg::Ref<AsyncResource>>& handler) {
-  v8::Local<v8::Function> bound = jsg::AsyncResource::wrap(js, fn, *this, thisArg);
+  auto& frame = jsg::AsyncContextFrame::current(js);
+  v8::Local<v8::Function> bound = jsg::AsyncContextFrame::wrap(js, fn, frame, thisArg);
   // Serves the same purpose as attach() in KJ things. Ensures that we hold a reference
   // to the AsyncResource object wrapper for as long as the function is held.
   jsg::check(bound->SetPrivate(js.v8Isolate->GetCurrentContext(),
@@ -118,21 +106,13 @@ v8::Local<v8::Value> AsyncResource::runInAsyncScope(
 
   auto context = js.v8Isolate->GetCurrentContext();
 
-  jsg::AsyncResource::Scope scope(js, *this);
+  jsg::AsyncContextFrame::Scope scope(js, *frame);
 
   return jsg::check(fn->Call(
       context,
       thisArg.orDefault(context->Global()),
       argv.size(),
       argv.begin()));
-}
-
-uint64_t AsyncHooksModule::executionAsyncId(jsg::Lock& js) {
-  return jsg::AsyncResource::current(js).id;
-}
-
-uint64_t AsyncHooksModule::triggerAsyncId(jsg::Lock& js) {
-  return jsg::AsyncResource::current(js).parentId.orDefault(0);
 }
 
 }  // namespace workerd::api::node

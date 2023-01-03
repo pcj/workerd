@@ -9,107 +9,116 @@
 namespace workerd::jsg {
 
 namespace {
-struct AsyncResourceWrappable final: public Wrappable,
-                                     public AsyncResource {
-  // Used to attach async context to JS objects like Promises.
-  using AsyncResource::AsyncResource;
-
-  static v8::Local<v8::Value> wrap(Lock& js,
-                                   uint64_t id,
-                                   kj::Maybe<AsyncResource&> maybeParent) {
-    auto wrapped = kj::refcounted<AsyncResourceWrappable>(js, id, maybeParent);
-    return wrapped->attachOpaqueWrapper(js.v8Isolate->GetCurrentContext(), false);
+kj::Maybe<AsyncContextFrame&> tryUnwrapFrame(v8::Isolate* isolate, v8::Local<v8::Value> handle) {
+  // Gets the held AsyncContextFrame from the opaque wrappable but does not consume it.
+  KJ_IF_MAYBE(wrappable, Wrappable::tryUnwrapOpaque(isolate, handle)) {
+    OpaqueWrappable<kj::Own<AsyncContextFrame>>* holder =
+        dynamic_cast<OpaqueWrappable<kj::Own<AsyncContextFrame>>*>(wrappable);
+    KJ_ASSERT(holder != nullptr);
+    KJ_ASSERT(!holder->movedAway);
+    return *holder->value;
   }
-
-  static kj::Maybe<AsyncResource&> tryUnwrap(v8::Isolate* isolate,
-                                             v8::Local<v8::Value> handle) {
-    KJ_IF_MAYBE(wrappable, Wrappable::tryUnwrapOpaque(isolate, handle)) {
-      AsyncResource* resource = dynamic_cast<AsyncResource*>(wrappable);
-      if (resource != nullptr) {
-        return *resource;
-      }
-    }
-    return nullptr;
-  }
-
-  kj::Maybe<kj::Own<Wrappable>> maybeGetStrongRef() override {
-    return kj::addRef(*this);
-  }
-};
+  return nullptr;
+}
 
 }  // namespace
 
-AsyncResource::AsyncResource(IsolateBase& isolate)
-    : id(0), isolate(isolate) {
-  this->isolate.registerAsyncResource(*this);
-}
+AsyncContextFrame::AsyncContextFrame(IsolateBase& isolate)
+    : isolate(isolate) {}
 
-AsyncResource::AsyncResource(
+AsyncContextFrame::AsyncContextFrame(
     Lock& js,
-    uint64_t id,
-    kj::Maybe<AsyncResource&> maybeParent)
-    : id(id),
-      parentId(maybeParent.map([](auto& parent) {
-        return parent.id;
-      })),
-      isolate(IsolateBase::from(js.v8Isolate)) {
-  isolate.registerAsyncResource(*this);
+    kj::Maybe<AsyncContextFrame&> maybeParent,
+    kj::Maybe<StorageEntry> maybeStorageEntry)
+    : AsyncContextFrame(IsolateBase::from(js.v8Isolate)) {
   KJ_IF_MAYBE(parent, maybeParent) {
-    parent->storage.propagate(js, this->storage);
+    parent->propagateTo(js, this->storage, kj::mv(maybeStorageEntry));
+  } else {
+    current(js).propagateTo(js, this->storage, kj::mv(maybeStorageEntry));
   }
 }
 
-AsyncResource::~AsyncResource() noexcept(false) {
-  isolate.unregisterAsyncResource(*this);
+void AsyncContextFrame::propagateTo(
+    Lock& js,
+    Storage& other,
+    kj::Maybe<StorageEntry> maybeStorageEntry) {
+  storage.eraseAll([](const auto& entry) { return entry.key->isDead(); });
+  KJ_DASSERT(other.size() == 0);
+  for (auto& entry : storage) {
+    other.insert(entry.clone(js));
+  }
+
+  KJ_IF_MAYBE(entry, maybeStorageEntry) {
+    other.upsert(kj::mv(*entry), [](StorageEntry& existing, StorageEntry&& row) mutable {
+      existing.value = kj::mv(row.value);
+    });
+  }
 }
 
-kj::Maybe<AsyncResource&> AsyncResource::tryUnwrap(Lock& js, V8Ref<v8::Promise>& promise) {
+kj::Maybe<AsyncContextFrame&> AsyncContextFrame::tryUnwrap(
+    Lock& js,
+    v8::Local<v8::Promise> promise) {
   auto handle = v8::Private::ForApi(js.v8Isolate, v8StrIntern(js.v8Isolate, "asyncResource"));
-  auto obj = check(promise.getHandle(js)->GetPrivate(js.v8Isolate->GetCurrentContext(), handle));
-  return AsyncResourceWrappable::tryUnwrap(js.v8Isolate, obj);
+  // We do not use the normal unwrapOpaque here since that would consume the wrapped
+  // value, and we need to be able to unwrap multiple times.
+  return tryUnwrapFrame(js.v8Isolate,
+      check(promise->GetPrivate(js.v8Isolate->GetCurrentContext(), handle)));
 }
 
-AsyncResource& AsyncResource::current(Lock& js) {
+kj::Maybe<AsyncContextFrame&> AsyncContextFrame::tryUnwrap(Lock& js, V8Ref<v8::Promise>& promise) {
+  return tryUnwrap(js, promise.getHandle(js));
+}
+
+AsyncContextFrame& AsyncContextFrame::current(Lock& js) {
   auto& isolateBase = IsolateBase::from(js.v8Isolate);
-  KJ_ASSERT(!isolateBase.asyncResourceStack.empty());
-  return *isolateBase.asyncResourceStack.front().resource;
+  KJ_ASSERT(!isolateBase.asyncFrameStack.empty());
+  return *isolateBase.asyncFrameStack.front();
 }
 
-kj::Own<AsyncResource> AsyncResource::create(Lock& js, kj::Maybe<AsyncResource&> maybeParent) {
-  auto id = js.getNextAsyncResourceId();
-  KJ_IF_MAYBE(parent, maybeParent) {
-    KJ_ASSERT(id > parent->id);
-    return kj::heap<AsyncResource>(js, id, *parent);
-  }
-  return kj::heap<AsyncResource>(js, id, current(js));
+kj::Own<AsyncContextFrame> AsyncContextFrame::create(
+    Lock& js,
+    kj::Maybe<AsyncContextFrame&> maybeParent,
+    kj::Maybe<StorageEntry> maybeStorageEntry) {
+  return kj::refcounted<AsyncContextFrame>(js, maybeParent, kj::mv(maybeStorageEntry));
 }
 
-v8::Local<v8::Function> AsyncResource::wrap(
+v8::Local<v8::Function> AsyncContextFrame::wrap(
     Lock& js,
     v8::Local<v8::Function> fn,
-    kj::Maybe<AsyncResource&> maybeParent,
+    kj::Maybe<AsyncContextFrame&> maybeFrame,
     kj::Maybe<v8::Local<v8::Value>> thisArg) {
   auto isolate = js.v8Isolate;
   auto context = isolate->GetCurrentContext();
   auto handle = v8::Private::ForApi(isolate, v8StrIntern(isolate, "asyncResource"));
-  if (!fn->HasPrivate(context, handle).FromJust()) {
-    auto id = js.getNextAsyncResourceId();
-    auto obj = AsyncResourceWrappable::wrap(js, id,
-        maybeParent.orDefault(AsyncResource::current(js)));
-    KJ_ASSERT(check(fn->SetPrivate(context, handle, obj)));
-    KJ_IF_MAYBE(arg, thisArg) {
-      auto thisArgHandle = v8::Private::ForApi(isolate, v8StrIntern(isolate, "thisArg"));
-      KJ_ASSERT(check(fn->SetPrivate(context, thisArgHandle, *arg)));
-    }
+
+  // Let's make sure the given function has not already been wrapped. If it has,
+  // we'll explicitly throw an error since wrapping a function more than once is
+  // most likely a bug.
+  JSG_REQUIRE(!check(fn->HasPrivate(context, handle)), TypeError,
+      "This function has already been associated with an async context.");
+
+  // Because we are working directly with JS functions here and not jsg::Function,
+  // we do not have the option of using either an internal field or lambda capture.
+  // Instead, we create an opaque wrapper holding a ref to the current frame and set
+  // it as a private field on the function.
+  auto frame = kj::addRef(AsyncContextFrame::current(js));
+  KJ_ASSERT(check(fn->SetPrivate(context, handle, wrapOpaque(context, kj::mv(frame)))));
+  KJ_IF_MAYBE(arg, thisArg) {
+    auto thisArgHandle = v8::Private::ForApi(isolate, v8StrIntern(isolate, "thisArg"));
+    KJ_ASSERT(check(fn->SetPrivate(context, thisArgHandle, *arg)));
   }
 
-  return jsg::check(v8::Function::New(context, [](const v8::FunctionCallbackInfo<v8::Value>& args) {
+  return jsg::check(v8::Function::New(context,
+      [](const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto isolate = args.GetIsolate();
     auto context = isolate->GetCurrentContext();
     auto fn = args.Data().As<v8::Function>();
     auto handle = v8::Private::ForApi(isolate, v8StrIntern(isolate, "asyncResource"));
     auto thisArgHandle = v8::Private::ForApi(isolate, v8StrIntern(isolate, "thisArg"));
-    auto& resource = KJ_ASSERT_NONNULL(AsyncResourceWrappable::tryUnwrap(isolate,
+
+    // We do not use the normal unwrapOpaque here since that would consume the wrapped
+    // value, and we need to be able to unwrap multiple times.
+    auto& frame = KJ_ASSERT_NONNULL(tryUnwrapFrame(isolate,
         check(fn->GetPrivate(context, handle))));
 
     v8::Local<v8::Value> thisArg = context->Global();
@@ -117,7 +126,7 @@ v8::Local<v8::Function> AsyncResource::wrap(
       thisArg = check(fn->GetPrivate(context, thisArgHandle));
     }
 
-    AsyncResource::Scope scope(jsg::Lock::from(isolate), resource);
+    AsyncContextFrame::Scope scope(jsg::Lock::from(isolate), frame);
 
     kj::Vector<v8::Local<v8::Value>> argv(args.Length());
     for (int n = 0; n < args.Length(); n++) {
@@ -131,73 +140,57 @@ v8::Local<v8::Function> AsyncResource::wrap(
   }, fn));
 }
 
-kj::Maybe<Value&> AsyncResource::get(StorageKey& key) {
-  return storage.get(key);
-}
-
-kj::Maybe<Value> AsyncResource::Storage::exchange(StorageKey& key, kj::Maybe<Value> value) {
-  cells.eraseAll([](const auto& cell) { return cell.key->isDead(); });
-  auto& cell = cells.findOrCreate(key, [key=kj::addRef(key)]() mutable {
-    return Cell { kj::mv(key) };
-  });
-  auto current = kj::mv(cell.value);
-  cell.value = kj::mv(value);
-  return kj::mv(current);
-}
-
-kj::Maybe<Value&> AsyncResource::Storage::get(StorageKey& key) {
-  cells.eraseAll([](const auto& cell) { return cell.key->isDead(); });
-  return cells.findOrCreate(key, [key=kj::addRef(key)]() mutable {
-    return Cell { kj::mv(key) };
-  }).value.map([](auto& value) -> Value& { return value; });
-}
-
-void AsyncResource::Storage::propagate(Lock& js, Storage& other) {
-  if (cells.size() == 0) return;
-  for (auto& cell : cells) {
-    other.cells.insert(Cell {
-      .key = kj::addRef(*cell.key),
-      .value = cell.value.map([&js](Value& val) { return val.addRef(js); })
-    });
+v8::Local<v8::Promise> AsyncContextFrame::wrap(
+    Lock& js,
+    v8::Local<v8::Promise> promise,
+    kj::Maybe<AsyncContextFrame&> maybeFrame) {
+  auto handle = v8::Private::ForApi(js.v8Isolate, v8StrIntern(js.v8Isolate, "asyncResource"));
+  auto context = js.v8Isolate->GetCurrentContext();
+  // If the promise has already been wrapped, do nothing else and just return the promise.
+  if (!check(promise->HasPrivate(context, handle))) {
+    // Otherwise, we have to create an opaque wrapper holding a ref to the current frame
+    // because we do not have the option of using an internal field with promises.
+    auto frame = kj::addRef(AsyncContextFrame::current(js));
+    KJ_ASSERT(check(promise->SetPrivate(context, handle, wrapOpaque(context, kj::mv(frame)))));
   }
+  return promise;
 }
 
-AsyncResource::Scope::Scope(Lock& js, AsyncResource& resource)
+kj::Maybe<Value&> AsyncContextFrame::get(StorageKey& key) {
+  KJ_ASSERT(!key.isDead());
+  storage.eraseAll([](const auto& entry) { return entry.key->isDead(); });
+  return storage.find(key).map([](auto& entry) -> Value& { return entry.value; });
+}
+
+AsyncContextFrame::Scope::Scope(Lock& js, AsyncContextFrame& resource)
     : Scope(js.v8Isolate, resource) {}
 
-AsyncResource::Scope::Scope(v8::Isolate* isolate, AsyncResource& resource)
+AsyncContextFrame::Scope::Scope(v8::Isolate* isolate, AsyncContextFrame& resource)
     : isolate(IsolateBase::from(isolate)) {
-  this->isolate.pushAsyncResource(resource);
+  this->isolate.pushAsyncFrame(resource);
 }
 
-AsyncResource::Scope::~Scope() noexcept(false) {
-  isolate.popAsyncResource();
+AsyncContextFrame::Scope::~Scope() noexcept(false) {
+  isolate.popAsyncFrame();
 }
 
-AsyncResource::StorageScope::StorageScope(
+AsyncContextFrame::StorageScope::StorageScope(
     Lock& js,
     StorageKey& key,
     Value store)
-    : resource(AsyncResource::current(js)),
-      key(key),
-      oldStore(resource.storage.exchange(key, kj::mv(store))) {
-  KJ_ASSERT(!key.isDead());
+    : frame(AsyncContextFrame::create(js, nullptr, StorageEntry {
+        .key = kj::addRef(key),
+        .value = kj::mv(store)
+      })),
+      scope(js, *frame) {}
+
+void IsolateBase::pushAsyncFrame(AsyncContextFrame& next) {
+  asyncFrameStack.push_front(&next);
 }
 
-AsyncResource::StorageScope::~StorageScope() noexcept(false) {
-  auto dropMe = resource.storage.exchange(key, kj::mv(oldStore));
-}
-
-void IsolateBase::pushAsyncResource(AsyncResource& next) {
-  asyncResourceStack.push_front(AsyncResourceEntry{
-    &next,
-    next.maybeGetStrongRef()
-  });
-}
-
-void IsolateBase::popAsyncResource() {
-  asyncResourceStack.pop_front();
-  KJ_ASSERT(!asyncResourceStack.empty(), "the async resource stack was corrupted");
+void IsolateBase::popAsyncFrame() {
+  asyncFrameStack.pop_front();
+  KJ_DASSERT(!asyncFrameStack.empty(), "the async context frame stack was corrupted");
 }
 
 void IsolateBase::promiseHook(v8::PromiseHookType type,
@@ -211,61 +204,48 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
     return;
   }
 
-  auto context = isolate->GetCurrentContext();
-  auto& isolateBase = IsolateBase::from(isolate);
   auto& js = Lock::from(isolate);
-
-  auto handle = v8::Private::ForApi(isolate, v8StrIntern(isolate, "asyncResource"));
-
-  const auto tryGetAsyncResource = [&](v8::Local<v8::Promise> promise)
-      -> kj::Maybe<AsyncResource&> {
-    auto obj = check(promise->GetPrivate(context, handle));
-    return AsyncResourceWrappable::tryUnwrap(isolate, obj);
-  };
-
-  const auto createAsyncResource = [&](v8::Local<v8::Promise> promise, AsyncResource& maybeParent)
-        -> AsyncResource& {
-    auto id = js.getNextAsyncResourceId();
-    auto obj = AsyncResourceWrappable::wrap(js, id, maybeParent);
-    KJ_ASSERT(check(promise->SetPrivate(context, handle, obj)));
-    return KJ_ASSERT_NONNULL(tryGetAsyncResource(promise));
-  };
-
-  const auto trackPromise = [&](
-      v8::Local<v8::Promise> promise,
-      v8::Local<v8::Value> parent) -> AsyncResource& {
-    KJ_IF_MAYBE(asyncResource, tryGetAsyncResource(promise)) {
-      return *asyncResource;
-    }
-
-    if (parent->IsPromise()) {
-      auto parentPromise = parent.As<v8::Promise>();
-      KJ_IF_MAYBE(asyncResource, tryGetAsyncResource(parentPromise)) {
-        return createAsyncResource(promise, *asyncResource);
-      }
-      return createAsyncResource(promise,
-          createAsyncResource(parentPromise, AsyncResource::current(js)));
-    }
-
-    return createAsyncResource(promise, AsyncResource::current(js));
-  };
 
   switch (type) {
     case v8::PromiseHookType::kInit: {
-      trackPromise(promise, parent);
+      // The kInit event is triggered by v8 when a deferred Promise is created. This
+      // includes all calls to `new Promise(...)`, `then()`, `catch()`, `finally()`,
+      // uses of `await ...`, `Promise.all()`, etc.
+      // Whenever a Promise is created, we associate it with the current AsyncContextFrame.
+      KJ_DASSERT(AsyncContextFrame::tryUnwrap(js, promise) == nullptr);
+      AsyncContextFrame::wrap(js, promise);
       break;
     }
     case v8::PromiseHookType::kBefore: {
-      auto& resource = trackPromise(promise, parent);
-      isolateBase.pushAsyncResource(resource);
+      // The kBefore event is triggered immediately before a Promise continuation.
+      // We use it here to enter the AsyncContextFrame that was associated with the
+      // promise when it was created.
+      auto& frame = KJ_ASSERT_NONNULL(AsyncContextFrame::tryUnwrap(js, promise),
+          "the promise has no associated AsyncContextFrame");
+      IsolateBase::from(isolate).pushAsyncFrame(frame);
+      // We do not use AsyncContextFrame::Scope here because we do not exit the frame
+      // until the kAfter event fires.
       break;
     }
     case v8::PromiseHookType::kAfter: {
-      isolateBase.popAsyncResource();
+#ifdef KJ_DEBUG
+      auto& frame = KJ_ASSERT_NONNULL(AsyncContextFrame::tryUnwrap(js, promise),
+          "the promise has no associated AsyncContextFrame");
+      // The frame associated with the promise must be the current frame.
+      KJ_ASSERT(&frame == &AsyncContextFrame::current(js));
+#endif
+      IsolateBase::from(isolate).popAsyncFrame();
       break;
     }
     case v8::PromiseHookType::kResolve: {
-      trackPromise(promise, parent);
+      // This case is a bit different. As an optimization, it appears that v8 will skip
+      // the kInit event for Promises that are immediately resolved (e.g. Promise.resolve,
+      // and Promise.reject) and instead will emit the kResolve event first. When this
+      // event occurs, we need to check to see if the promise is already wrapped, and if
+      // it is not, do so.
+      if (AsyncContextFrame::tryUnwrap(js, promise) == nullptr) {
+        AsyncContextFrame::wrap(js, promise);
+      }
       break;
     }
   }

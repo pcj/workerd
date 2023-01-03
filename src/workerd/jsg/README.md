@@ -1481,18 +1481,17 @@ can contain `,` outside of balanced brackets. This macro can only be used once p
 ## Async Context Tracking
 
 JSG provides a mechanism for rudimentary async context tracking to support the implementation
-of async local storage. This is provided by the `workerd::jsg::AsyncResource` class defined in
+of async local storage. This is provided by the `workerd::jsg::AsyncContextFrame` class defined in
 `src/workerd/jsg/async-context.h`.
 
-The async context is hierarchical, with the `IsolateBase` holding the root async resource.
-Every other `AsyncResource` has a parent.
+`AsyncContextFrame`s form a stack. For every `v8::Isolate` there is always a root frame.
+"Entering" a frame means pushing it to the top of the stack, making it "current". Exiting
+a frame means popping it back off the top of the stack.
 
-Every `AsyncResource` has a storage context.
+Every `AsyncContextFrame` has a storage context. The storage context is a map of multiple
+individual storage cells, each tied to an opaque key.
 
-The storage context is a map of multiple individual storage cells, each tied to an opaque
-key.
-
-When a new `AsyncResource` is created, the storage context of the parent is propagated to the
+When a new `AsyncContextFrame` is created, the storage context of the current is propagated to the
 new resource's storage context.
 
 All JavaScript promises, timers, and microtasks propagate the async context. In JavaScript,
@@ -1511,15 +1510,16 @@ als.run(123, () => scheduler.wait(10)).then(() => {
 console.log(als.getStore());  // undefined
 ```
 
-Any type can act as an async resource by acquiring an instance of `AsyncResource`.
+Any type can act as an async resource by acquiring a reference to the current Async
+Context Frame.
 
 ```cpp
 jsg::Lock& js = ...;
-kj::Own<jsg::AsyncResource> asyncResource = jsg::AsyncResource::create(js);
+kj::Own<jsg::AsyncContextFrame> frame = kj::addRef(jsg::AsyncResource::current(js));
 
 // enter the async resource scope:
 {
-  jsg::AsyncResource::Scope asyncScope(js, *asyncResource);
+  jsg::AsyncContextFrame::Scope asyncScope(js, *frame);
   // run some code synchronously...
 }
 // The async scope will exit automatically...

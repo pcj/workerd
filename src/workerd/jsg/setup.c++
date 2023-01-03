@@ -185,21 +185,6 @@ HeapTracer::HeapTracer(v8::Isolate* isolate): isolate(isolate) {
   }, this, v8::GCType::kGCTypeAll);
 }
 
-void IsolateBase::registerAsyncResource(AsyncResource& resource) {
-  asyncResourcesMap.insert(resource.id, &resource);
-}
-
-void IsolateBase::unregisterAsyncResource(AsyncResource& resource) {
-  asyncResourcesMap.erase(resource.id);
-}
-
-kj::Maybe<AsyncResource&> IsolateBase::tryGetAsyncResource(uint64_t id) {
-  KJ_IF_MAYBE(found, asyncResourcesMap.find(id)) {
-    return **found;
-  }
-  return nullptr;
-}
-
 void HeapTracer::destroy() {
   DISALLOW_KJ_IO_DESTRUCTORS_SCOPE;
   KJ_DEFER(isolate = nullptr);
@@ -264,7 +249,7 @@ IsolateBase::IsolateBase(const V8System& system, v8::Isolate::CreateParams&& cre
     : system(system),
       ptr(newIsolate(kj::mv(createParams))),
       heapTracer(ptr),
-      rootAsyncResource(*this) {
+      rootAsyncFrame(kj::refcounted<jsg::AsyncContextFrame>(*this)) {
   v8::CppHeapCreateParams params {
     .wrapper_descriptor = v8::WrapperDescriptor(
         Wrappable::WRAPPABLE_TAG_FIELD_INDEX,
@@ -290,7 +275,7 @@ IsolateBase::IsolateBase(const V8System& system, v8::Isolate::CreateParams&& cre
   ptr->AttachCppHeap(cppgcHeap.get());
   ptr->SetEmbedderRootsHandler(&heapTracer);
 
-  asyncResourceStack.push_front({&rootAsyncResource});
+  asyncFrameStack.push_front(rootAsyncFrame.get());
 
   ptr->SetFatalErrorHandler(&fatalError);
   ptr->SetOOMErrorHandler(&oomError);
@@ -326,8 +311,6 @@ IsolateBase::IsolateBase(const V8System& system, v8::Isolate::CreateParams&& cre
         break;
     }
   });
-
-  ptr->SetPromiseHook(&promiseHook);
 
   // Create opaqueTemplate
   {
@@ -396,6 +379,10 @@ v8::ModifyCodeGenerationFromStringsResult IsolateBase::modifyCodeGenCallback(
   v8::Isolate* isolate = context->GetIsolate();
   IsolateBase* self = reinterpret_cast<IsolateBase*>(isolate->GetData(0));
   return { .codegen_allowed = self->evalAllowed, .modified_source = {} };
+}
+
+void IsolateBase::setAsyncContextTrackingEnabled() {
+  ptr->SetPromiseHook(&promiseHook);
 }
 
 bool IsolateBase::allowWasmCallback(

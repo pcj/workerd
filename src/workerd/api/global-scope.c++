@@ -103,8 +103,8 @@ ServiceWorkerGlobalScope::ServiceWorkerGlobalScope(v8::Isolate* isolate)
                 v8::PromiseRejectEvent event,
                 jsg::V8Ref<v8::Promise> promise,
                 jsg::Value value) {
-          jsg::AsyncResource::Scope scope(js,
-              KJ_ASSERT_NONNULL(jsg::AsyncResource::tryUnwrap(js, promise)));
+          jsg::AsyncContextFrame::Scope scope(js,
+              KJ_ASSERT_NONNULL(jsg::AsyncContextFrame::tryUnwrap(js, promise)));
           auto ev = jsg::alloc<PromiseRejectionEvent>(event, kj::mv(promise), kj::mv(value));
           dispatchEventImpl(js, kj::mv(ev));
         }) {}
@@ -492,7 +492,7 @@ v8::Local<v8::String> ServiceWorkerGlobalScope::atob(kj::String data, v8::Isolat
 }
 
 void ServiceWorkerGlobalScope::queueMicrotask(v8::Local<v8::Function> task, v8::Isolate* isolate) {
-  isolate->EnqueueMicrotask(jsg::AsyncResource::wrap(jsg::Lock::from(isolate), task));
+  isolate->EnqueueMicrotask(jsg::AsyncContextFrame::wrap(jsg::Lock::from(isolate), task));
 }
 
 v8::Local<v8::Value> ServiceWorkerGlobalScope::structuredClone(
@@ -527,25 +527,25 @@ TimeoutId::NumberType ServiceWorkerGlobalScope::setTimeout(
     v8::Isolate* isolate) {
   auto argv = kj::heapArrayFromIterable<jsg::Value>(kj::mv(args));
   auto timeoutId = IoContext::current().setTimeoutImpl(
-    timeoutIdGenerator,
-    /* repeats = */ false,
-    [function = function.addRef(isolate),
-     argv = kj::mv(argv),
-     resource = jsg::AsyncResource::create(jsg::Lock::from(isolate))](jsg::Lock& js) mutable {
-      auto isolate = js.v8Isolate;
-      auto context = isolate->GetCurrentContext();
-      auto localFunction = function.getHandle(isolate);
-      auto localArgs = KJ_MAP(arg, argv) {
-        return arg.getHandle(isolate);
-      };
-      auto argc = localArgs.size();
+      timeoutIdGenerator,
+      /* repeats = */ false,
+      [function = function.addRef(isolate),
+       argv = kj::mv(argv),
+       frame = kj::addRef(jsg::AsyncContextFrame::current(jsg::Lock::from(isolate)))]
+       (jsg::Lock& js) mutable {
+    auto isolate = js.v8Isolate;
+    auto context = isolate->GetCurrentContext();
+    auto localFunction = function.getHandle(js);
+    auto localArgs = KJ_MAP(arg, argv) {
+      return arg.getHandle(isolate);
+    };
+    auto argc = localArgs.size();
 
-      jsg::AsyncResource::Scope scope(js, *resource);
+    jsg::AsyncContextFrame::Scope scope(js, *frame);
 
-      // Cast to void to discard the result value.
-      (void)jsg::check(localFunction->Call(context, context->Global(), argc, &localArgs.front()));
-    },
-    msDelay.orDefault(0));
+    // Cast to void to discard the result value.
+    (void)jsg::check(localFunction->Call(context, context->Global(), argc, &localArgs.front()));
+  }, msDelay.orDefault(0));
   return timeoutId.toNumber();
 }
 
@@ -562,25 +562,25 @@ TimeoutId::NumberType ServiceWorkerGlobalScope::setInterval(
     v8::Isolate* isolate) {
   auto argv = kj::heapArrayFromIterable<jsg::Value>(kj::mv(args));
   auto timeoutId = IoContext::current().setTimeoutImpl(
-    timeoutIdGenerator,
-    /* repeats = */ true,
-    [function = function.addRef(isolate),
-     argv = kj::mv(argv),
-     resource = jsg::AsyncResource::create(jsg::Lock::from(isolate))](jsg::Lock& js) mutable {
-      auto isolate = js.v8Isolate;
-      auto context = isolate->GetCurrentContext();
-      auto localFunction = function.getHandle(isolate);
-      auto localArgs = KJ_MAP(arg, argv) {
-        return arg.getHandle(isolate);
-      };
-      auto argc = localArgs.size();
+      timeoutIdGenerator,
+      /* repeats = */ true,
+      [function = function.addRef(isolate),
+       argv = kj::mv(argv),
+       frame = kj::addRef(jsg::AsyncContextFrame::current(jsg::Lock::from(isolate)))]
+       (jsg::Lock& js) mutable {
+    auto isolate = js.v8Isolate;
+    auto context = isolate->GetCurrentContext();
+    auto localFunction = function.getHandle(isolate);
+    auto localArgs = KJ_MAP(arg, argv) {
+      return arg.getHandle(isolate);
+    };
+    auto argc = localArgs.size();
 
-      jsg::AsyncResource::Scope scope(js, *resource);
+    jsg::AsyncContextFrame::Scope scope(js, *frame);
 
-      // Cast to void to discard the result value.
-      (void)jsg::check(localFunction->Call(context, context->Global(), argc, &localArgs.front()));
-    },
-    msDelay.orDefault(0));
+    // Cast to void to discard the result value.
+    (void)jsg::check(localFunction->Call(context, context->Global(), argc, &localArgs.front()));
+  }, msDelay.orDefault(0));
   return timeoutId.toNumber();
 }
 

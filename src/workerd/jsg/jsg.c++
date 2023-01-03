@@ -156,6 +156,10 @@ void Lock::setCaptureThrowsAsRejections(bool capture) {
   IsolateBase::from(v8Isolate).setCaptureThrowsAsRejections({}, capture);
 }
 
+void Lock::setAsyncContextTrackingEnabled() {
+  IsolateBase::from(v8Isolate).setAsyncContextTrackingEnabled();
+}
+
 void Lock::setCommonJsExportDefault(bool exportDefault) {
   IsolateBase::from(v8Isolate).setCommonJsExportDefault({}, exportDefault);
 }
@@ -171,14 +175,6 @@ void Lock::requestGcForTesting() const {
   }
   v8Isolate->RequestGarbageCollectionForTesting(
     v8::Isolate::GarbageCollectionType::kFullGarbageCollection);
-}
-
-uint64_t Lock::getNextAsyncResourceId() {
-  return IsolateBase::from(v8Isolate).getNextAsyncResourceId();
-}
-
-kj::Maybe<AsyncResource&> Lock::tryGetAsyncResource(uint64_t id) {
-  return IsolateBase::from(v8Isolate).tryGetAsyncResource(id);
 }
 
 Name Lock::newSymbol(kj::StringPtr symbol) {

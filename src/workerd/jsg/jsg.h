@@ -1997,6 +1997,7 @@ public:
   void setLoggerCallback(kj::Function<Logger>&& logger);
 
   void setAsyncContextTrackingEnabled();
+  bool isAsyncContextTrackingEnabled();
 
   // ---------------------------------------------------------------------------
   // Misc. Stuff

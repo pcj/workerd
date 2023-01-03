@@ -160,6 +160,10 @@ void Lock::setAsyncContextTrackingEnabled() {
   IsolateBase::from(v8Isolate).setAsyncContextTrackingEnabled();
 }
 
+bool Lock::isAsyncContextTrackingEnabled() {
+  return IsolateBase::from(v8Isolate).isAsyncContextTrackingEnabled();
+}
+
 void Lock::setCommonJsExportDefault(bool exportDefault) {
   IsolateBase::from(v8Isolate).setCommonJsExportDefault({}, exportDefault);
 }

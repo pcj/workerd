@@ -102,6 +102,7 @@ public:
   }
 
   void setAsyncContextTrackingEnabled();
+  bool isAsyncContextTrackingEnabled() { return asyncContextTrackingEnabled; }
 
 private:
   template <typename TypeWrapper>
@@ -141,6 +142,7 @@ private:
   // and there are a number of async APIs that currently throw. When the captureThrowsAsRejections
   // flag is set, that old behavior is changed to be correct.
   bool exportCommonJsDefault = false;
+  bool asyncContextTrackingEnabled = false;
 
   kj::Maybe<kj::Function<Logger>> maybeLogger;
 

@@ -382,6 +382,8 @@ v8::ModifyCodeGenerationFromStringsResult IsolateBase::modifyCodeGenCallback(
 }
 
 void IsolateBase::setAsyncContextTrackingEnabled() {
+  if (asyncContextTrackingEnabled) return;
+  asyncContextTrackingEnabled = true;
   ptr->SetPromiseHook(&promiseHook);
 }
 

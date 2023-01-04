@@ -314,7 +314,7 @@ kj::Own<jsg::ModuleRegistry> WorkerdApiIsolate::compileModules(
     }
   }
 
-  if (getFeatureFlags().getNodeJs18CompatExperimental()) {
+  if (getFeatureFlags().getNodeJsCompat()) {
     api::node::registerNodeJsCompatModules(*modules, getFeatureFlags());
   }
 

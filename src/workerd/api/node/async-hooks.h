@@ -61,7 +61,7 @@ public:
     JSG_METHOD(enterWith);
     JSG_METHOD(disable);
 
-    if (flags.getNodeJs18CompatExperimental()) {
+    if (flags.getNodeJsCompat()) {
       JSG_TS_OVERRIDE(AsyncLocalStorage<T> {
         getStore(): T | undefined;
         run<R, TArgs extends any[]>(store: T, callback: (...args: TArgs) => R, ...args: TArgs): R;
@@ -171,7 +171,7 @@ public:
     JSG_METHOD(bind);
     JSG_METHOD(runInAsyncScope);
 
-    if (flags.getNodeJs18CompatExperimental()) {
+    if (flags.getNodeJsCompat()) {
       JSG_TS_OVERRIDE(interface AsyncResourceOptions {
         triggerAsyncId?: number;
       });
@@ -208,7 +208,7 @@ public:
     JSG_NESTED_TYPE(AsyncLocalStorage);
     JSG_NESTED_TYPE(AsyncResource);
 
-    if (flags.getNodeJs18CompatExperimental()) {
+    if (flags.getNodeJsCompat()) {
       JSG_TS_ROOT();
       JSG_TS_OVERRIDE(AsyncHooksModule {});
     } else {

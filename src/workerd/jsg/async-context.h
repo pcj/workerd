@@ -102,7 +102,7 @@ public:
   // If maybeStorageEntry is non-null, the associated storage cell in the new frame is
   // set to the given value.
 
-  static v8::Local<v8::Function> wrap(Lock& js, v8::Local<v8::Function> fn,
+  static v8::Local<v8::Function> attachContext(Lock& js, v8::Local<v8::Function> fn,
                                       kj::Maybe<AsyncContextFrame&> maybeFrame = nullptr,
                                       kj::Maybe<v8::Local<v8::Value>> thisArg = nullptr);
   // Associates the given JavaScript function with the given AsyncContextFrame, returning
@@ -110,13 +110,13 @@ public:
   // when the wrapper function is called. If maybeFrame is not specified, the current()
   // frame is used.
 
-  static v8::Local<v8::Promise> wrap(Lock& js, v8::Local<v8::Promise> promise,
+  static v8::Local<v8::Promise> attachContext(Lock& js, v8::Local<v8::Promise> promise,
                                      kj::Maybe<AsyncContextFrame&> maybeFrame = nullptr);
   // Associates the given JavaScript promise with the given AsyncContextFrame, returning
   // the same promise back. If maybeFrame is not specified, the current() frame is used.
 
-  static kj::Maybe<AsyncContextFrame&> tryUnwrap(Lock& js, V8Ref<v8::Promise>& promise);
-  static kj::Maybe<AsyncContextFrame&> tryUnwrap(Lock& js, v8::Local<v8::Promise> promise);
+  static kj::Maybe<AsyncContextFrame&> tryGetContext(Lock& js, V8Ref<v8::Promise>& promise);
+  static kj::Maybe<AsyncContextFrame&> tryGetContext(Lock& js, v8::Local<v8::Promise> promise);
   // Returns a reference to the AsyncContextFrame that was current when the JS Promise
   // was created. When async context tracking is enabled, this should always return a
   // non-null value.
@@ -127,7 +127,7 @@ public:
     IsolateBase& isolate;
     Scope(Lock& js, kj::Maybe<AsyncContextFrame&> frame = nullptr);
     Scope(v8::Isolate* isolate, kj::Maybe<AsyncContextFrame&> frame = nullptr);
-    Scope(v8::Isolate* isolate);
+    // If frame is nullptr, the root frame is assumed.
     ~Scope() noexcept(false);
     KJ_DISALLOW_COPY(Scope);
   };

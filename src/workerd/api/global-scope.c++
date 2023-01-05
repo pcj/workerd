@@ -107,7 +107,7 @@ ServiceWorkerGlobalScope::ServiceWorkerGlobalScope(v8::Isolate* isolate)
           // associated with the promise before we invoke the unhandled rejection callback handling.
           kj::Maybe<jsg::AsyncContextFrame::Scope> maybeScope;
           if (js.isAsyncContextTrackingEnabled()) {
-             maybeScope.emplace(js, jsg::AsyncContextFrame::tryUnwrap(js, promise));
+            maybeScope.emplace(js, jsg::AsyncContextFrame::tryGetContext(js, promise));
           }
           auto ev = jsg::alloc<PromiseRejectionEvent>(event, kj::mv(promise), kj::mv(value));
           dispatchEventImpl(js, kj::mv(ev));
@@ -496,7 +496,7 @@ v8::Local<v8::String> ServiceWorkerGlobalScope::atob(kj::String data, v8::Isolat
 }
 
 void ServiceWorkerGlobalScope::queueMicrotask(v8::Local<v8::Function> task, v8::Isolate* isolate) {
-  isolate->EnqueueMicrotask(jsg::AsyncContextFrame::wrap(jsg::Lock::from(isolate), task));
+  isolate->EnqueueMicrotask(jsg::AsyncContextFrame::attachContext(jsg::Lock::from(isolate), task));
 }
 
 v8::Local<v8::Value> ServiceWorkerGlobalScope::structuredClone(

@@ -9,7 +9,9 @@
 namespace workerd::jsg {
 
 namespace {
-kj::Maybe<AsyncContextFrame&> tryUnwrapFrame(v8::Isolate* isolate, v8::Local<v8::Value> handle) {
+kj::Maybe<AsyncContextFrame&> tryGetContextFrame(
+    v8::Isolate* isolate,
+    v8::Local<v8::Value> handle) {
   // Gets the held AsyncContextFrame from the opaque wrappable but does not consume it.
   KJ_IF_MAYBE(wrappable, Wrappable::tryUnwrapOpaque(isolate, handle)) {
     OpaqueWrappable<kj::Own<AsyncContextFrame>>* holder =
@@ -53,18 +55,20 @@ AsyncContextFrame::AsyncContextFrame(
   }
 }
 
-kj::Maybe<AsyncContextFrame&> AsyncContextFrame::tryUnwrap(
+kj::Maybe<AsyncContextFrame&> AsyncContextFrame::tryGetContext(
     Lock& js,
     v8::Local<v8::Promise> promise) {
   auto handle = js.getPrivateSymbolFor("asyncResource"_kj);
   // We do not use the normal unwrapOpaque here since that would consume the wrapped
   // value, and we need to be able to unwrap multiple times.
-  return tryUnwrapFrame(js.v8Isolate,
+  return tryGetContextFrame(js.v8Isolate,
       check(promise->GetPrivate(js.v8Isolate->GetCurrentContext(), handle)));
 }
 
-kj::Maybe<AsyncContextFrame&> AsyncContextFrame::tryUnwrap(Lock& js, V8Ref<v8::Promise>& promise) {
-  return tryUnwrap(js, promise.getHandle(js));
+kj::Maybe<AsyncContextFrame&> AsyncContextFrame::tryGetContext(
+    Lock& js,
+    V8Ref<v8::Promise>& promise) {
+  return tryGetContext(js, promise.getHandle(js));
 }
 
 AsyncContextFrame& AsyncContextFrame::current(Lock& js) {
@@ -80,7 +84,7 @@ kj::Own<AsyncContextFrame> AsyncContextFrame::create(
   return kj::refcounted<AsyncContextFrame>(js, maybeParent, kj::mv(maybeStorageEntry));
 }
 
-v8::Local<v8::Function> AsyncContextFrame::wrap(
+v8::Local<v8::Function> AsyncContextFrame::attachContext(
     Lock& js,
     v8::Local<v8::Function> fn,
     kj::Maybe<AsyncContextFrame&> maybeFrame,
@@ -117,7 +121,7 @@ v8::Local<v8::Function> AsyncContextFrame::wrap(
 
     // We do not use the normal unwrapOpaque here since that would consume the wrapped
     // value, and we need to be able to unwrap multiple times.
-    auto& frame = KJ_ASSERT_NONNULL(tryUnwrapFrame(isolate,
+    auto& frame = KJ_ASSERT_NONNULL(tryGetContextFrame(isolate,
         check(fn->GetPrivate(context, handle))));
 
     v8::Local<v8::Value> thisArg = context->Global();
@@ -139,7 +143,7 @@ v8::Local<v8::Function> AsyncContextFrame::wrap(
   }, fn));
 }
 
-v8::Local<v8::Promise> AsyncContextFrame::wrap(
+v8::Local<v8::Promise> AsyncContextFrame::attachContext(
     Lock& js,
     v8::Local<v8::Promise> promise,
     kj::Maybe<AsyncContextFrame&> maybeFrame) {
@@ -227,8 +231,8 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
         // As a performance optimization, we only attach the context if the current is not
         // the root.
         if (!currentFrame.isRoot(js)) {
-          KJ_DASSERT(AsyncContextFrame::tryUnwrap(js, promise) == nullptr);
-          AsyncContextFrame::wrap(js, promise);
+          KJ_DASSERT(AsyncContextFrame::tryGetContext(js, promise) == nullptr);
+          AsyncContextFrame::attachContext(js, promise);
         }
         break;
       }
@@ -236,7 +240,7 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
         // The kBefore event is triggered immediately before a Promise continuation.
         // We use it here to enter the AsyncContextFrame that was associated with the
         // promise when it was created.
-        KJ_IF_MAYBE(frame, AsyncContextFrame::tryUnwrap(js, promise)) {
+        KJ_IF_MAYBE(frame, AsyncContextFrame::tryGetContext(js, promise)) {
           isolateBase.pushAsyncFrame(*frame);
         } else {
           // If the promise does not have a frame attached, we assume the root
@@ -251,7 +255,7 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
       }
       case v8::PromiseHookType::kAfter: {
   #ifdef KJ_DEBUG
-        KJ_IF_MAYBE(frame, AsyncContextFrame::tryUnwrap(js, promise)) {
+        KJ_IF_MAYBE(frame, AsyncContextFrame::tryGetContext(js, promise)) {
           // The frame associated with the promise must be the current frame.
           KJ_ASSERT(frame == &currentFrame);
         } else {
@@ -279,8 +283,8 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
         // When this event occurs, and the promise is rejected, we need to check to see if the
         // promise is already wrapped, and if it is not, do so.
         if (!currentFrame.isRoot(js) && isRejected() &&
-            AsyncContextFrame::tryUnwrap(js, promise) == nullptr) {
-          AsyncContextFrame::wrap(js, promise);
+            AsyncContextFrame::tryGetContext(js, promise) == nullptr) {
+          AsyncContextFrame::attachContext(js, promise);
         }
         break;
       }

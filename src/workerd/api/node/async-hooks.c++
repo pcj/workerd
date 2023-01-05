@@ -85,7 +85,7 @@ v8::Local<v8::Function> AsyncResource::bind(
     jsg::Optional<v8::Local<v8::Value>> thisArg,
     const jsg::TypeHandler<jsg::Ref<AsyncResource>>& handler) {
   auto& frame = jsg::AsyncContextFrame::current(js);
-  v8::Local<v8::Function> bound = jsg::AsyncContextFrame::wrap(js, fn, frame, thisArg);
+  v8::Local<v8::Function> bound = jsg::AsyncContextFrame::attachContext(js, fn, frame, thisArg);
   // Serves the same purpose as attach() in KJ things. Ensures that we hold a reference
   // to the AsyncResource object wrapper for as long as the function is held.
   jsg::check(bound->SetPrivate(js.v8Isolate->GetCurrentContext(),

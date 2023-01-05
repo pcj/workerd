@@ -51,6 +51,16 @@ public:
 
     void reset() { dead = true; }
     // The owner of the key should reset it when it goes away.
+    // The StorageKey is typically owned by an instance of AsyncLocalstorage (see
+    // the api/node/async-hooks.h). When the ALS instance is garbage collected, it
+    // must call reset to signal that this StorageKey is "dead" and can never be
+    // looked up again. Subsequent accesses to a frame will remove dead keys from
+    // the frame lazily. The lazy cleanup does mean that values may persist in
+    // memory a bit longer so if it proves to be problematic we can make the cleanup
+    // a bit more proactive.
+    //
+    // TODO(later): We should also evaluate the relatively unlikely case where an
+    // ALS is capturing a reference to itself and therefore can never be cleaned up.
 
     bool isDead() const { return dead; }
     inline uint hashCode() const { return hash; }
@@ -115,14 +125,18 @@ public:
     // AsyncContextFrame::Scope makes the given AsyncContextFrame the current in the
     // stack until the scope is destroyed.
     IsolateBase& isolate;
-    Scope(Lock& js, AsyncContextFrame& frame);
-    Scope(v8::Isolate* isolate, AsyncContextFrame& frame);
+    Scope(Lock& js, kj::Maybe<AsyncContextFrame&> frame = nullptr);
+    Scope(v8::Isolate* isolate, kj::Maybe<AsyncContextFrame&> frame = nullptr);
+    Scope(v8::Isolate* isolate);
     ~Scope() noexcept(false);
     KJ_DISALLOW_COPY(Scope);
   };
 
   kj::Maybe<Value&> get(StorageKey& key);
   // Retrieves the value that is associated with the given key.
+
+  bool isRoot(Lock& js) const;
+  // True only if this AsyncContextFrame is the root frame for the given isolate.
 
   struct StorageScope {
     // Creates a new AsyncContextFrame with a new value for the given

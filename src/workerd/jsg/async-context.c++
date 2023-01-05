@@ -161,12 +161,16 @@ kj::Maybe<Value&> AsyncContextFrame::get(StorageKey& key) {
   return storage.find(key).map([](auto& entry) -> Value& { return entry.value; });
 }
 
-AsyncContextFrame::Scope::Scope(Lock& js, AsyncContextFrame& resource)
+AsyncContextFrame::Scope::Scope(Lock& js, kj::Maybe<AsyncContextFrame&> resource)
     : Scope(js.v8Isolate, resource) {}
 
-AsyncContextFrame::Scope::Scope(v8::Isolate* isolate, AsyncContextFrame& resource)
+AsyncContextFrame::Scope::Scope(v8::Isolate* isolate, kj::Maybe<AsyncContextFrame&> frame)
     : isolate(IsolateBase::from(isolate)) {
-  this->isolate.pushAsyncFrame(resource);
+  KJ_IF_MAYBE(f, frame) {
+    this->isolate.pushAsyncFrame(*f);
+  } else {
+    this->isolate.pushAsyncFrame(*this->isolate.rootAsyncFrame);
+  }
 }
 
 AsyncContextFrame::Scope::~Scope() noexcept(false) {
@@ -182,6 +186,10 @@ AsyncContextFrame::StorageScope::StorageScope(
         .value = kj::mv(store)
       })),
       scope(js, *frame) {}
+
+bool AsyncContextFrame::isRoot(Lock& js) const {
+  return IsolateBase::from(js.v8Isolate).rootAsyncFrame == this;
+}
 
 void IsolateBase::pushAsyncFrame(AsyncContextFrame& next) {
   asyncFrameStack.push_front(&next);
@@ -204,6 +212,10 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
   }
 
   auto& js = Lock::from(isolate);
+  auto& isolateBase = IsolateBase::from(isolate);
+  auto& currentFrame = AsyncContextFrame::current(js);
+
+  const auto isRejected = [&] { return promise->State() == v8::Promise::PromiseState::kRejected; };
 
   js.tryCatch([&] {
     switch (type) {
@@ -212,36 +224,48 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
         // includes all calls to `new Promise(...)`, `then()`, `catch()`, `finally()`,
         // uses of `await ...`, `Promise.all()`, etc.
         // Whenever a Promise is created, we associate it with the current AsyncContextFrame.
-        KJ_DASSERT(AsyncContextFrame::tryUnwrap(js, promise) == nullptr);
-        AsyncContextFrame::wrap(js, promise);
+        // As a performance optimization, we only attach the context if the current is not
+        // the root.
+        if (!currentFrame.isRoot(js)) {
+          KJ_DASSERT(AsyncContextFrame::tryUnwrap(js, promise) == nullptr);
+          AsyncContextFrame::wrap(js, promise);
+        }
         break;
       }
       case v8::PromiseHookType::kBefore: {
         // The kBefore event is triggered immediately before a Promise continuation.
         // We use it here to enter the AsyncContextFrame that was associated with the
         // promise when it was created.
-        auto& frame = KJ_ASSERT_NONNULL(AsyncContextFrame::tryUnwrap(js, promise),
-            "the promise has no associated AsyncContextFrame");
-        IsolateBase::from(isolate).pushAsyncFrame(frame);
+        KJ_IF_MAYBE(frame, AsyncContextFrame::tryUnwrap(js, promise)) {
+          isolateBase.pushAsyncFrame(*frame);
+        } else {
+          // If the promise does not have a frame attached, we assume the root
+          // frame is used. Just to keep bookkeeping easier, we still go ahead
+          // and push the frame onto the stack again so we can just unconditionally
+          // pop it off in the kAfter without performing additional checks.
+          isolateBase.pushAsyncFrame(*isolateBase.rootAsyncFrame);
+        }
         // We do not use AsyncContextFrame::Scope here because we do not exit the frame
         // until the kAfter event fires.
         break;
       }
       case v8::PromiseHookType::kAfter: {
   #ifdef KJ_DEBUG
-        auto& frame = KJ_ASSERT_NONNULL(AsyncContextFrame::tryUnwrap(js, promise),
-            "the promise has no associated AsyncContextFrame");
-        // The frame associated with the promise must be the current frame.
-        KJ_ASSERT(&frame == &AsyncContextFrame::current(js));
+        KJ_IF_MAYBE(frame, AsyncContextFrame::tryUnwrap(js, promise)) {
+          // The frame associated with the promise must be the current frame.
+          KJ_ASSERT(frame == &currentFrame);
+        } else {
+          KJ_ASSERT(currentFrame.isRoot(js));
+        }
   #endif
-        IsolateBase::from(isolate).popAsyncFrame();
+        isolateBase.popAsyncFrame();
 
         // If the promise has been rejected here, we have to maintain the association of the
         // async context to the promise so that the context can be propagated to the unhandled
         // rejection handler. However, if the promise has been fulfilled, we do not expect
         // the context to be used any longer so we can break the context association here and
         // allow the opaque wrapper to be garbage collected.
-        if (promise->State() == v8::Promise::PromiseState::kFulfilled) {
+        if (!isRejected()) {
           auto handle = js.getPrivateSymbolFor("asyncResource"_kj);
           check(promise->DeletePrivate(js.v8Isolate->GetCurrentContext(), handle));
         }
@@ -254,7 +278,7 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
         // Promise.resolve, and Promise.reject) and instead will emit the kResolve event first.
         // When this event occurs, and the promise is rejected, we need to check to see if the
         // promise is already wrapped, and if it is not, do so.
-        if (promise->State() == v8::Promise::PromiseState::kRejected &&
+        if (!currentFrame.isRoot(js) && isRejected() &&
             AsyncContextFrame::tryUnwrap(js, promise) == nullptr) {
           AsyncContextFrame::wrap(js, promise);
         }

@@ -107,8 +107,7 @@ ServiceWorkerGlobalScope::ServiceWorkerGlobalScope(v8::Isolate* isolate)
           // associated with the promise before we invoke the unhandled rejection callback handling.
           kj::Maybe<jsg::AsyncContextFrame::Scope> maybeScope;
           if (js.isAsyncContextTrackingEnabled()) {
-            maybeScope.emplace(js,
-                KJ_ASSERT_NONNULL(jsg::AsyncContextFrame::tryUnwrap(js, promise)));
+             maybeScope.emplace(js, jsg::AsyncContextFrame::tryUnwrap(js, promise));
           }
           auto ev = jsg::alloc<PromiseRejectionEvent>(event, kj::mv(promise), kj::mv(value));
           dispatchEventImpl(js, kj::mv(ev));

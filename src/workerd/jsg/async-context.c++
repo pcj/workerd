@@ -239,11 +239,12 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
     }
     case v8::PromiseHookType::kResolve: {
       // This case is a bit different. As an optimization, it appears that v8 will skip
-      // the kInit event for Promises that are immediately resolved (e.g. Promise.resolve,
-      // and Promise.reject) and instead will emit the kResolve event first. When this
-      // event occurs, we need to check to see if the promise is already wrapped, and if
-      // it is not, do so.
-      if (AsyncContextFrame::tryUnwrap(js, promise) == nullptr) {
+      // the kInit, kBefore, and kAfter events for Promises that are immediately resolved (e.g.
+      // Promise.resolve, and Promise.reject) and instead will emit the kResolve event first.
+      // When this event occurs, and the promise is rejected, we need to check to see if the
+      // promise is already wrapped, and if it is not, do so.
+      if (promise->State() == v8::Promise::PromiseState::kRejected &&
+          AsyncContextFrame::tryUnwrap(js, promise) == nullptr) {
         AsyncContextFrame::wrap(js, promise);
       }
       break;

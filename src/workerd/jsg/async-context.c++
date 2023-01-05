@@ -31,27 +31,25 @@ AsyncContextFrame::AsyncContextFrame(
     kj::Maybe<AsyncContextFrame&> maybeParent,
     kj::Maybe<StorageEntry> maybeStorageEntry)
     : AsyncContextFrame(IsolateBase::from(js.v8Isolate)) {
+
+  // Propagate the storage context of the parent frame to this newly created frame.
+  const auto propagate = [&](AsyncContextFrame& parent) {
+    parent.storage.eraseAll([](const auto& entry) { return entry.key->isDead(); });
+    for (auto& entry : parent.storage) {
+      storage.insert(entry.clone(js));
+    }
+
+    KJ_IF_MAYBE(entry, maybeStorageEntry) {
+      storage.upsert(kj::mv(*entry), [](StorageEntry& existing, StorageEntry&& row) mutable {
+        existing.value = kj::mv(row.value);
+      });
+    }
+  };
+
   KJ_IF_MAYBE(parent, maybeParent) {
-    parent->propagateTo(js, this->storage, kj::mv(maybeStorageEntry));
+    propagate(*parent);
   } else {
-    current(js).propagateTo(js, this->storage, kj::mv(maybeStorageEntry));
-  }
-}
-
-void AsyncContextFrame::propagateTo(
-    Lock& js,
-    Storage& other,
-    kj::Maybe<StorageEntry> maybeStorageEntry) {
-  storage.eraseAll([](const auto& entry) { return entry.key->isDead(); });
-  KJ_DASSERT(other.size() == 0);
-  for (auto& entry : storage) {
-    other.insert(entry.clone(js));
-  }
-
-  KJ_IF_MAYBE(entry, maybeStorageEntry) {
-    other.upsert(kj::mv(*entry), [](StorageEntry& existing, StorageEntry&& row) mutable {
-      existing.value = kj::mv(row.value);
-    });
+    propagate(current(js));
   }
 }
 

@@ -157,8 +157,6 @@ private:
 
   IsolateBase& isolate;
 
-  void propagateTo(Lock& js, Storage& other, kj::Maybe<StorageEntry> maybeStorageEntry);
-
   friend struct StorageScope;
   friend class IsolateBase;
 };

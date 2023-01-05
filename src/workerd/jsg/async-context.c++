@@ -206,50 +206,66 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
 
   auto& js = Lock::from(isolate);
 
-  switch (type) {
-    case v8::PromiseHookType::kInit: {
-      // The kInit event is triggered by v8 when a deferred Promise is created. This
-      // includes all calls to `new Promise(...)`, `then()`, `catch()`, `finally()`,
-      // uses of `await ...`, `Promise.all()`, etc.
-      // Whenever a Promise is created, we associate it with the current AsyncContextFrame.
-      KJ_DASSERT(AsyncContextFrame::tryUnwrap(js, promise) == nullptr);
-      AsyncContextFrame::wrap(js, promise);
-      break;
-    }
-    case v8::PromiseHookType::kBefore: {
-      // The kBefore event is triggered immediately before a Promise continuation.
-      // We use it here to enter the AsyncContextFrame that was associated with the
-      // promise when it was created.
-      auto& frame = KJ_ASSERT_NONNULL(AsyncContextFrame::tryUnwrap(js, promise),
-          "the promise has no associated AsyncContextFrame");
-      IsolateBase::from(isolate).pushAsyncFrame(frame);
-      // We do not use AsyncContextFrame::Scope here because we do not exit the frame
-      // until the kAfter event fires.
-      break;
-    }
-    case v8::PromiseHookType::kAfter: {
-#ifdef KJ_DEBUG
-      auto& frame = KJ_ASSERT_NONNULL(AsyncContextFrame::tryUnwrap(js, promise),
-          "the promise has no associated AsyncContextFrame");
-      // The frame associated with the promise must be the current frame.
-      KJ_ASSERT(&frame == &AsyncContextFrame::current(js));
-#endif
-      IsolateBase::from(isolate).popAsyncFrame();
-      break;
-    }
-    case v8::PromiseHookType::kResolve: {
-      // This case is a bit different. As an optimization, it appears that v8 will skip
-      // the kInit, kBefore, and kAfter events for Promises that are immediately resolved (e.g.
-      // Promise.resolve, and Promise.reject) and instead will emit the kResolve event first.
-      // When this event occurs, and the promise is rejected, we need to check to see if the
-      // promise is already wrapped, and if it is not, do so.
-      if (promise->State() == v8::Promise::PromiseState::kRejected &&
-          AsyncContextFrame::tryUnwrap(js, promise) == nullptr) {
+  js.tryCatch([&] {
+    switch (type) {
+      case v8::PromiseHookType::kInit: {
+        // The kInit event is triggered by v8 when a deferred Promise is created. This
+        // includes all calls to `new Promise(...)`, `then()`, `catch()`, `finally()`,
+        // uses of `await ...`, `Promise.all()`, etc.
+        // Whenever a Promise is created, we associate it with the current AsyncContextFrame.
+        KJ_DASSERT(AsyncContextFrame::tryUnwrap(js, promise) == nullptr);
         AsyncContextFrame::wrap(js, promise);
+        break;
       }
-      break;
+      case v8::PromiseHookType::kBefore: {
+        // The kBefore event is triggered immediately before a Promise continuation.
+        // We use it here to enter the AsyncContextFrame that was associated with the
+        // promise when it was created.
+        auto& frame = KJ_ASSERT_NONNULL(AsyncContextFrame::tryUnwrap(js, promise),
+            "the promise has no associated AsyncContextFrame");
+        IsolateBase::from(isolate).pushAsyncFrame(frame);
+        // We do not use AsyncContextFrame::Scope here because we do not exit the frame
+        // until the kAfter event fires.
+        break;
+      }
+      case v8::PromiseHookType::kAfter: {
+  #ifdef KJ_DEBUG
+        auto& frame = KJ_ASSERT_NONNULL(AsyncContextFrame::tryUnwrap(js, promise),
+            "the promise has no associated AsyncContextFrame");
+        // The frame associated with the promise must be the current frame.
+        KJ_ASSERT(&frame == &AsyncContextFrame::current(js));
+  #endif
+        IsolateBase::from(isolate).popAsyncFrame();
+
+        // If the promise has been rejected here, we have to maintain the association of the
+        // async context to the promise so that the context can be propagated to the unhandled
+        // rejection handler. However, if the promise has been fulfilled, we do not expect
+        // the context to be used any longer so we can break the context association here and
+        // allow the opaque wrapper to be garbage collected.
+        if (promise->State() == v8::Promise::PromiseState::kFulfilled) {
+          auto handle = v8::Private::ForApi(js.v8Isolate,
+              v8StrIntern(js.v8Isolate, "asyncResource"));
+          check(promise->DeletePrivate(js.v8Isolate->GetCurrentContext(), handle));
+        }
+
+        break;
+      }
+      case v8::PromiseHookType::kResolve: {
+        // This case is a bit different. As an optimization, it appears that v8 will skip
+        // the kInit, kBefore, and kAfter events for Promises that are immediately resolved (e.g.
+        // Promise.resolve, and Promise.reject) and instead will emit the kResolve event first.
+        // When this event occurs, and the promise is rejected, we need to check to see if the
+        // promise is already wrapped, and if it is not, do so.
+        if (promise->State() == v8::Promise::PromiseState::kRejected &&
+            AsyncContextFrame::tryUnwrap(js, promise) == nullptr) {
+          AsyncContextFrame::wrap(js, promise);
+        }
+        break;
+      }
     }
-  }
+  }, [isolate](Value&& exception) {
+    isolate->ThrowException(exception.getHandle(isolate));
+  });
 }
 
 }  // namespace workerd::jsg

@@ -58,7 +58,7 @@ void AsyncContextFrame::propagateTo(
 kj::Maybe<AsyncContextFrame&> AsyncContextFrame::tryUnwrap(
     Lock& js,
     v8::Local<v8::Promise> promise) {
-  auto handle = v8::Private::ForApi(js.v8Isolate, v8StrIntern(js.v8Isolate, "asyncResource"));
+  auto handle = js.getPrivateSymbolFor("asyncResource"_kj);
   // We do not use the normal unwrapOpaque here since that would consume the wrapped
   // value, and we need to be able to unwrap multiple times.
   return tryUnwrapFrame(js.v8Isolate,
@@ -89,7 +89,7 @@ v8::Local<v8::Function> AsyncContextFrame::wrap(
     kj::Maybe<v8::Local<v8::Value>> thisArg) {
   auto isolate = js.v8Isolate;
   auto context = isolate->GetCurrentContext();
-  auto handle = v8::Private::ForApi(isolate, v8StrIntern(isolate, "asyncResource"));
+  auto handle = js.getPrivateSymbolFor("asyncResource"_kj);
 
   // Let's make sure the given function has not already been wrapped. If it has,
   // we'll explicitly throw an error since wrapping a function more than once is
@@ -104,7 +104,7 @@ v8::Local<v8::Function> AsyncContextFrame::wrap(
   auto frame = kj::addRef(AsyncContextFrame::current(js));
   KJ_ASSERT(check(fn->SetPrivate(context, handle, wrapOpaque(context, kj::mv(frame)))));
   KJ_IF_MAYBE(arg, thisArg) {
-    auto thisArgHandle = v8::Private::ForApi(isolate, v8StrIntern(isolate, "thisArg"));
+    auto thisArgHandle = js.getPrivateSymbolFor("thisArg"_kj);
     KJ_ASSERT(check(fn->SetPrivate(context, thisArgHandle, *arg)));
   }
 
@@ -112,9 +112,10 @@ v8::Local<v8::Function> AsyncContextFrame::wrap(
       [](const v8::FunctionCallbackInfo<v8::Value>& args) {
     auto isolate = args.GetIsolate();
     auto context = isolate->GetCurrentContext();
+    auto& js = Lock::from(isolate);
     auto fn = args.Data().As<v8::Function>();
-    auto handle = v8::Private::ForApi(isolate, v8StrIntern(isolate, "asyncResource"));
-    auto thisArgHandle = v8::Private::ForApi(isolate, v8StrIntern(isolate, "thisArg"));
+    auto handle = js.getPrivateSymbolFor("asyncResource"_kj);
+    auto thisArgHandle = js.getPrivateSymbolFor("thisArg"_kj);
 
     // We do not use the normal unwrapOpaque here since that would consume the wrapped
     // value, and we need to be able to unwrap multiple times.
@@ -126,7 +127,7 @@ v8::Local<v8::Function> AsyncContextFrame::wrap(
       thisArg = check(fn->GetPrivate(context, thisArgHandle));
     }
 
-    AsyncContextFrame::Scope scope(jsg::Lock::from(isolate), frame);
+    AsyncContextFrame::Scope scope(js, frame);
 
     kj::Vector<v8::Local<v8::Value>> argv(args.Length());
     for (int n = 0; n < args.Length(); n++) {
@@ -144,7 +145,7 @@ v8::Local<v8::Promise> AsyncContextFrame::wrap(
     Lock& js,
     v8::Local<v8::Promise> promise,
     kj::Maybe<AsyncContextFrame&> maybeFrame) {
-  auto handle = v8::Private::ForApi(js.v8Isolate, v8StrIntern(js.v8Isolate, "asyncResource"));
+  auto handle = js.getPrivateSymbolFor("asyncResource"_kj);
   auto context = js.v8Isolate->GetCurrentContext();
   // If the promise has already been wrapped, do nothing else and just return the promise.
   if (!check(promise->HasPrivate(context, handle))) {
@@ -243,8 +244,7 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
         // the context to be used any longer so we can break the context association here and
         // allow the opaque wrapper to be garbage collected.
         if (promise->State() == v8::Promise::PromiseState::kFulfilled) {
-          auto handle = v8::Private::ForApi(js.v8Isolate,
-              v8StrIntern(js.v8Isolate, "asyncResource"));
+          auto handle = js.getPrivateSymbolFor("asyncResource"_kj);
           check(promise->DeletePrivate(js.v8Isolate->GetCurrentContext(), handle));
         }
 

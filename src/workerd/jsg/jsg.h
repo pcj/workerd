@@ -2007,6 +2007,8 @@ public:
   // it will throw. If a need for a minor GC is needed look at the call in jsg.c++ and the
   // implementation in setup.c++. Use responsibly.
 
+  v8::Local<v8::Private> getPrivateSymbolFor(kj::StringPtr ptr);
+
 private:
   friend class IsolateBase;
   template <typename TypeWrapper>

@@ -512,6 +512,15 @@ void IsolateBase::jitCodeEvent(const v8::JitCodeEvent* event) noexcept {
   }
 }
 
+v8::Local<v8::Private> IsolateBase::getPrivateSymbolFor(kj::StringPtr name) {
+  return privateSymbols.findOrCreate(name, [&] {
+    return PrivateSymbolMap::Entry {
+      kj::str(name),
+      V8Ref(ptr, v8::Private::ForApi(ptr, v8StrIntern(ptr, name)))
+    };
+  }).getHandle(ptr);
+}
+
 kj::Maybe<kj::StringPtr> getJsStackTrace(void* ucontext, kj::ArrayPtr<char> scratch) {
   if (!v8Initialized) {
     return nullptr;

@@ -58,7 +58,7 @@ AsyncContextFrame::AsyncContextFrame(
 kj::Maybe<AsyncContextFrame&> AsyncContextFrame::tryGetContext(
     Lock& js,
     v8::Local<v8::Promise> promise) {
-  auto handle = js.getPrivateSymbolFor("asyncResource"_kj);
+  auto handle = js.getPrivateSymbolFor(Lock::PrivateSymbols::ASYNC_RESOURCE);
   // We do not use the normal unwrapOpaque here since that would consume the wrapped
   // value, and we need to be able to unwrap multiple times.
   return tryGetContextFrame(js.v8Isolate,
@@ -84,14 +84,14 @@ kj::Own<AsyncContextFrame> AsyncContextFrame::create(
   return kj::refcounted<AsyncContextFrame>(js, maybeParent, kj::mv(maybeStorageEntry));
 }
 
-v8::Local<v8::Function> AsyncContextFrame::attachContext(
+v8::Local<v8::Function> AsyncContextFrame::wrap(
     Lock& js,
     v8::Local<v8::Function> fn,
     kj::Maybe<AsyncContextFrame&> maybeFrame,
     kj::Maybe<v8::Local<v8::Value>> thisArg) {
   auto isolate = js.v8Isolate;
   auto context = isolate->GetCurrentContext();
-  auto handle = js.getPrivateSymbolFor("asyncResource"_kj);
+  auto handle = js.getPrivateSymbolFor(Lock::PrivateSymbols::ASYNC_RESOURCE);
 
   // Let's make sure the given function has not already been wrapped. If it has,
   // we'll explicitly throw an error since wrapping a function more than once is
@@ -106,7 +106,7 @@ v8::Local<v8::Function> AsyncContextFrame::attachContext(
   auto frame = kj::addRef(AsyncContextFrame::current(js));
   KJ_ASSERT(check(fn->SetPrivate(context, handle, wrapOpaque(context, kj::mv(frame)))));
   KJ_IF_MAYBE(arg, thisArg) {
-    auto thisArgHandle = js.getPrivateSymbolFor("thisArg"_kj);
+    auto thisArgHandle = js.getPrivateSymbolFor(Lock::PrivateSymbols::THIS_ARG);
     KJ_ASSERT(check(fn->SetPrivate(context, thisArgHandle, *arg)));
   }
 
@@ -116,8 +116,8 @@ v8::Local<v8::Function> AsyncContextFrame::attachContext(
     auto context = isolate->GetCurrentContext();
     auto& js = Lock::from(isolate);
     auto fn = args.Data().As<v8::Function>();
-    auto handle = js.getPrivateSymbolFor("asyncResource"_kj);
-    auto thisArgHandle = js.getPrivateSymbolFor("thisArg"_kj);
+    auto handle = js.getPrivateSymbolFor(Lock::PrivateSymbols::ASYNC_RESOURCE);
+    auto thisArgHandle = js.getPrivateSymbolFor(Lock::PrivateSymbols::THIS_ARG);
 
     // We do not use the normal unwrapOpaque here since that would consume the wrapped
     // value, and we need to be able to unwrap multiple times.
@@ -143,20 +143,20 @@ v8::Local<v8::Function> AsyncContextFrame::attachContext(
   }, fn));
 }
 
-v8::Local<v8::Promise> AsyncContextFrame::attachContext(
+void AsyncContextFrame::attachContext(
     Lock& js,
     v8::Local<v8::Promise> promise,
     kj::Maybe<AsyncContextFrame&> maybeFrame) {
-  auto handle = js.getPrivateSymbolFor("asyncResource"_kj);
+  auto handle = js.getPrivateSymbolFor(Lock::PrivateSymbols::ASYNC_RESOURCE);
   auto context = js.v8Isolate->GetCurrentContext();
   // If the promise has already been wrapped, do nothing else and just return the promise.
-  if (!check(promise->HasPrivate(context, handle))) {
-    // Otherwise, we have to create an opaque wrapper holding a ref to the current frame
-    // because we do not have the option of using an internal field with promises.
-    auto frame = kj::addRef(AsyncContextFrame::current(js));
-    KJ_ASSERT(check(promise->SetPrivate(context, handle, wrapOpaque(context, kj::mv(frame)))));
-  }
-  return promise;
+
+  KJ_DASSERT(!check(promise->HasPrivate(context, handle)));
+
+  // Otherwise, we have to create an opaque wrapper holding a ref to the current frame
+  // because we do not have the option of using an internal field with promises.
+  auto frame = kj::addRef(AsyncContextFrame::current(js));
+  KJ_ASSERT(check(promise->SetPrivate(context, handle, wrapOpaque(context, kj::mv(frame)))));
 }
 
 kj::Maybe<Value&> AsyncContextFrame::get(StorageKey& key) {
@@ -270,7 +270,7 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
         // the context to be used any longer so we can break the context association here and
         // allow the opaque wrapper to be garbage collected.
         if (!isRejected()) {
-          auto handle = js.getPrivateSymbolFor("asyncResource"_kj);
+          auto handle = js.getPrivateSymbolFor(Lock::PrivateSymbols::ASYNC_RESOURCE);
           check(promise->DeletePrivate(js.v8Isolate->GetCurrentContext(), handle));
         }
 

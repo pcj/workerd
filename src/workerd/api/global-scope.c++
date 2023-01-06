@@ -496,7 +496,7 @@ v8::Local<v8::String> ServiceWorkerGlobalScope::atob(kj::String data, v8::Isolat
 }
 
 void ServiceWorkerGlobalScope::queueMicrotask(v8::Local<v8::Function> task, v8::Isolate* isolate) {
-  isolate->EnqueueMicrotask(jsg::AsyncContextFrame::attachContext(jsg::Lock::from(isolate), task));
+  isolate->EnqueueMicrotask(jsg::AsyncContextFrame::wrap(jsg::Lock::from(isolate), task));
 }
 
 v8::Local<v8::Value> ServiceWorkerGlobalScope::structuredClone(

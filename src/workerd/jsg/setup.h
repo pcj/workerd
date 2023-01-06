@@ -104,7 +104,7 @@ public:
   void setAsyncContextTrackingEnabled();
   bool isAsyncContextTrackingEnabled() { return asyncContextTrackingEnabled; }
 
-  v8::Local<v8::Private> getPrivateSymbolFor(kj::StringPtr ptr);
+  v8::Local<v8::Private> getPrivateSymbolFor(Lock::PrivateSymbols symbol);
 
 private:
   template <typename TypeWrapper>
@@ -152,8 +152,8 @@ private:
   // FunctionTemplate used by Wrappable::attachOpaqueWrapper(). Just a constructor for an empty
   // object with 2 internal fields.
 
-  using PrivateSymbolMap = kj::HashMap<kj::String, V8Ref<v8::Private>>;
-  PrivateSymbolMap privateSymbols;
+  // Keep the size here in sync w
+  kj::Maybe<V8Ref<v8::Private>> privateSymbols[Lock::PrivateSymbols::SYMBOL_COUNT];
 
   static constexpr auto DESTRUCTION_QUEUE_INITIAL_SIZE = 8;
   // We expect queues to remain relatively small -- 8 is the largest size I have observed from local

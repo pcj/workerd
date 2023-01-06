@@ -102,7 +102,7 @@ public:
   // If maybeStorageEntry is non-null, the associated storage cell in the new frame is
   // set to the given value.
 
-  static v8::Local<v8::Function> attachContext(Lock& js, v8::Local<v8::Function> fn,
+  static v8::Local<v8::Function> wrap(Lock& js, v8::Local<v8::Function> fn,
                                       kj::Maybe<AsyncContextFrame&> maybeFrame = nullptr,
                                       kj::Maybe<v8::Local<v8::Value>> thisArg = nullptr);
   // Associates the given JavaScript function with the given AsyncContextFrame, returning
@@ -110,8 +110,8 @@ public:
   // when the wrapper function is called. If maybeFrame is not specified, the current()
   // frame is used.
 
-  static v8::Local<v8::Promise> attachContext(Lock& js, v8::Local<v8::Promise> promise,
-                                     kj::Maybe<AsyncContextFrame&> maybeFrame = nullptr);
+  static void attachContext(Lock& js, v8::Local<v8::Promise> promise,
+                            kj::Maybe<AsyncContextFrame&> maybeFrame = nullptr);
   // Associates the given JavaScript promise with the given AsyncContextFrame, returning
   // the same promise back. If maybeFrame is not specified, the current() frame is used.
 

@@ -14,11 +14,9 @@ kj::Maybe<AsyncContextFrame&> tryGetContextFrame(
     v8::Local<v8::Value> handle) {
   // Gets the held AsyncContextFrame from the opaque wrappable but does not consume it.
   KJ_IF_MAYBE(wrappable, Wrappable::tryUnwrapOpaque(isolate, handle)) {
-    OpaqueWrappable<kj::Own<AsyncContextFrame>>* holder =
-        dynamic_cast<OpaqueWrappable<kj::Own<AsyncContextFrame>>*>(wrappable);
-    KJ_ASSERT(holder != nullptr);
-    KJ_ASSERT(!holder->movedAway);
-    return *holder->value;
+    AsyncContextFrame* frame = dynamic_cast<AsyncContextFrame*>(wrappable);
+    KJ_ASSERT(frame != nullptr);
+    return *frame;
   }
   return nullptr;
 }
@@ -73,15 +71,17 @@ kj::Maybe<AsyncContextFrame&> AsyncContextFrame::tryGetContext(
 
 AsyncContextFrame& AsyncContextFrame::current(Lock& js) {
   auto& isolateBase = IsolateBase::from(js.v8Isolate);
-  KJ_ASSERT(!isolateBase.asyncFrameStack.empty());
+  if (isolateBase.asyncFrameStack.empty()) {
+    return *isolateBase.getRootAsyncContext();
+  }
   return *isolateBase.asyncFrameStack.front();
 }
 
-kj::Own<AsyncContextFrame> AsyncContextFrame::create(
+Ref<AsyncContextFrame> AsyncContextFrame::create(
     Lock& js,
     kj::Maybe<AsyncContextFrame&> maybeParent,
     kj::Maybe<StorageEntry> maybeStorageEntry) {
-  return kj::refcounted<AsyncContextFrame>(js, maybeParent, kj::mv(maybeStorageEntry));
+  return alloc<AsyncContextFrame>(js, maybeParent, kj::mv(maybeStorageEntry));
 }
 
 v8::Local<v8::Function> AsyncContextFrame::wrap(
@@ -104,7 +104,7 @@ v8::Local<v8::Function> AsyncContextFrame::wrap(
   // Instead, we create an opaque wrapper holding a ref to the current frame and set
   // it as a private field on the function.
   auto frame = kj::addRef(AsyncContextFrame::current(js));
-  KJ_ASSERT(check(fn->SetPrivate(context, handle, wrapOpaque(context, kj::mv(frame)))));
+  KJ_ASSERT(check(fn->SetPrivate(context, handle, frame->getJSWrapper(js))));
   KJ_IF_MAYBE(arg, thisArg) {
     auto thisArgHandle = js.getPrivateSymbolFor(Lock::PrivateSymbols::THIS_ARG);
     KJ_ASSERT(check(fn->SetPrivate(context, thisArgHandle, *arg)));
@@ -149,14 +149,13 @@ void AsyncContextFrame::attachContext(
     kj::Maybe<AsyncContextFrame&> maybeFrame) {
   auto handle = js.getPrivateSymbolFor(Lock::PrivateSymbols::ASYNC_RESOURCE);
   auto context = js.v8Isolate->GetCurrentContext();
-  // If the promise has already been wrapped, do nothing else and just return the promise.
 
   KJ_DASSERT(!check(promise->HasPrivate(context, handle)));
 
   // Otherwise, we have to create an opaque wrapper holding a ref to the current frame
   // because we do not have the option of using an internal field with promises.
   auto frame = kj::addRef(AsyncContextFrame::current(js));
-  KJ_ASSERT(check(promise->SetPrivate(context, handle, wrapOpaque(context, kj::mv(frame)))));
+  KJ_ASSERT(check(promise->SetPrivate(context, handle, frame->getJSWrapper(js))));
 }
 
 kj::Maybe<Value&> AsyncContextFrame::get(StorageKey& key) {
@@ -173,7 +172,7 @@ AsyncContextFrame::Scope::Scope(v8::Isolate* isolate, kj::Maybe<AsyncContextFram
   KJ_IF_MAYBE(f, frame) {
     this->isolate.pushAsyncFrame(*f);
   } else {
-    this->isolate.pushAsyncFrame(*this->isolate.rootAsyncFrame);
+    this->isolate.pushAsyncFrame(*this->isolate.getRootAsyncContext());
   }
 }
 
@@ -192,7 +191,20 @@ AsyncContextFrame::StorageScope::StorageScope(
       scope(js, *frame) {}
 
 bool AsyncContextFrame::isRoot(Lock& js) const {
-  return IsolateBase::from(js.v8Isolate).rootAsyncFrame == this;
+  return IsolateBase::from(js.v8Isolate).getRootAsyncContext() == this;
+}
+
+v8::Local<v8::Object> AsyncContextFrame::getJSWrapper(Lock& js) {
+  KJ_IF_MAYBE(handle, tryGetHandle(js.v8Isolate)) {
+    return *handle;
+  }
+  return attachOpaqueWrapper(js.v8Isolate->GetCurrentContext(), true);
+}
+
+void AsyncContextFrame::jsgVisitForGc(GcVisitor& visitor) {
+  for (auto& entry : storage) {
+    visitor.visit(entry.value);
+  }
 }
 
 void IsolateBase::pushAsyncFrame(AsyncContextFrame& next) {
@@ -200,8 +212,27 @@ void IsolateBase::pushAsyncFrame(AsyncContextFrame& next) {
 }
 
 void IsolateBase::popAsyncFrame() {
-  asyncFrameStack.pop_front();
   KJ_DASSERT(!asyncFrameStack.empty(), "the async context frame stack was corrupted");
+  asyncFrameStack.pop_front();
+}
+
+void IsolateBase::setAsyncContextTrackingEnabled() {
+  if (asyncContextTrackingEnabled) return;
+  asyncContextTrackingEnabled = true;
+  ptr->SetPromiseHook(&promiseHook);
+}
+
+AsyncContextFrame* IsolateBase::getRootAsyncContext() {
+  KJ_IF_MAYBE(frame, rootAsyncFrame) {
+    return frame->get();
+  }
+  // We initialize this lazily instead of in the IsolateBase constructor
+  // because AsyncContextFrame is a Wrappable and rootAsyncFrame is a Ref.
+  // Calling alloc during IsolateBase construction is not allowed because
+  // Ref's constructor requires the Isolate lock to be held already.
+  KJ_ASSERT(asyncFrameStack.empty());
+  rootAsyncFrame = alloc<AsyncContextFrame>(*this);
+  return KJ_ASSERT_NONNULL(rootAsyncFrame).get();
 }
 
 void IsolateBase::promiseHook(v8::PromiseHookType type,
@@ -251,7 +282,7 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
           // frame is used. Just to keep bookkeeping easier, we still go ahead
           // and push the frame onto the stack again so we can just unconditionally
           // pop it off in the kAfter without performing additional checks.
-          isolateBase.pushAsyncFrame(*isolateBase.rootAsyncFrame);
+          isolateBase.pushAsyncFrame(*isolateBase.getRootAsyncContext());
         }
         // We do not use AsyncContextFrame::Scope here because we do not exit the frame
         // until the kAfter event fires.

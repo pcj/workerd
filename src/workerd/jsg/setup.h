@@ -103,6 +103,7 @@ public:
 
   void setAsyncContextTrackingEnabled();
   bool isAsyncContextTrackingEnabled() { return asyncContextTrackingEnabled; }
+  AsyncContextFrame* getRootAsyncContext();
 
   v8::Local<v8::Private> getPrivateSymbolFor(Lock::PrivateSymbols symbol);
 
@@ -246,7 +247,12 @@ private:
   void popAsyncFrame();
 
   std::deque<AsyncContextFrame*> asyncFrameStack;
-  kj::Own<AsyncContextFrame> rootAsyncFrame;
+  kj::Maybe<Ref<AsyncContextFrame>> rootAsyncFrame;
+  // The rootAsyncFrame is a maybe because it is lazily initialized.
+  // We cannot create Ref's within the IsolateBase constructor and
+  // we don't want this to be a bare kj::Own because it might have
+  // a JS wrapper associated with it. Calling getRootAsyncContext
+  // for the first time will lazily create the root frame.
 
   friend class AsyncContextFrame;
 };

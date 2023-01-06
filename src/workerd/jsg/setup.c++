@@ -248,8 +248,7 @@ namespace {
 IsolateBase::IsolateBase(const V8System& system, v8::Isolate::CreateParams&& createParams)
     : system(system),
       ptr(newIsolate(kj::mv(createParams))),
-      heapTracer(ptr),
-      rootAsyncFrame(kj::refcounted<jsg::AsyncContextFrame>(*this)) {
+      heapTracer(ptr) {
   v8::CppHeapCreateParams params {
     .wrapper_descriptor = v8::WrapperDescriptor(
         Wrappable::WRAPPABLE_TAG_FIELD_INDEX,
@@ -274,8 +273,6 @@ IsolateBase::IsolateBase(const V8System& system, v8::Isolate::CreateParams&& cre
   cppgcHeap = v8::CppHeap::Create(const_cast<v8::Platform*>(system.platform.get()), params);
   ptr->AttachCppHeap(cppgcHeap.get());
   ptr->SetEmbedderRootsHandler(&heapTracer);
-
-  asyncFrameStack.push_front(rootAsyncFrame.get());
 
   ptr->SetFatalErrorHandler(&fatalError);
   ptr->SetOOMErrorHandler(&oomError);
@@ -379,12 +376,6 @@ v8::ModifyCodeGenerationFromStringsResult IsolateBase::modifyCodeGenCallback(
   v8::Isolate* isolate = context->GetIsolate();
   IsolateBase* self = reinterpret_cast<IsolateBase*>(isolate->GetData(0));
   return { .codegen_allowed = self->evalAllowed, .modified_source = {} };
-}
-
-void IsolateBase::setAsyncContextTrackingEnabled() {
-  if (asyncContextTrackingEnabled) return;
-  asyncContextTrackingEnabled = true;
-  ptr->SetPromiseHook(&promiseHook);
 }
 
 bool IsolateBase::allowWasmCallback(

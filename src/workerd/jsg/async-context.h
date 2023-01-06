@@ -8,7 +8,7 @@
 
 namespace workerd::jsg {
 
-class AsyncContextFrame: public kj::Refcounted {
+class AsyncContextFrame: public Wrappable {
   // Provides for basic internal async context tracking. Eventually, it is expected that
   // this will be provided by V8 assuming that the AsyncContext proposal advances through
   // TC-39. For now, however, we implement a model that is similar but not quite identical
@@ -43,6 +43,12 @@ class AsyncContextFrame: public kj::Refcounted {
   // All frames (except for the Root) are created within the scope of a parent, which by
   // default is whichever frame is current when the new frame is created. When the new frame
   // is created, it inherits a copy storage context of the parent.
+  //
+  // AsyncContextFrame's are Wrappables because for certain kinds of async resources
+  // like promises or JS functions, we have to be able to store a reference to the frame
+  // using an opaque private property rather than an internal field or lambda capture.
+  // In such cases, we attach an opaque JS wrapper to the frame and use that opaque
+  // wrapper to hold the frame reference.
 public:
   class StorageKey: public kj::Refcounted {
     // An opaque key that identifies an async-local storage cell within the frame.
@@ -94,7 +100,7 @@ public:
   static AsyncContextFrame& current(Lock& js);
   // Returns the reference to the AsyncContextFrame currently at the top of the stack.
 
-  static kj::Own<AsyncContextFrame> create(
+  static Ref<AsyncContextFrame> create(
       Lock& js,
       kj::Maybe<AsyncContextFrame&> maybeParent = nullptr,
       kj::Maybe<StorageEntry> maybeStorageEntry = nullptr);
@@ -138,11 +144,17 @@ public:
   bool isRoot(Lock& js) const;
   // True only if this AsyncContextFrame is the root frame for the given isolate.
 
+  v8::Local<v8::Object> getJSWrapper(Lock& js);
+  // Gets an opaque JavaScript Object wrapper object for this frame. If a wrapper
+  // does not currently exist, one is created. This wrapper is only used to set a
+  // private reference to the frame on JS objects like promises and functions.
+  // See the attachContext and wrap functions for details.
+
   struct StorageScope {
     // Creates a new AsyncContextFrame with a new value for the given
     // StorageKey and sets that frame as current for as long as the StorageScope
     // is alive.
-    kj::Own<AsyncContextFrame> frame;
+    Ref<AsyncContextFrame> frame;
     Scope scope;
     // Note that the scope here holds a bare ref to the AsyncContextFrame so it
     // is important that these member fields stay in the correct cleanup order.
@@ -170,6 +182,8 @@ private:
   Storage storage;
 
   IsolateBase& isolate;
+
+  void jsgVisitForGc(GcVisitor& visitor) override;
 
   friend struct StorageScope;
   friend class IsolateBase;

@@ -221,7 +221,7 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
 
   const auto isRejected = [&] { return promise->State() == v8::Promise::PromiseState::kRejected; };
 
-  js.tryCatch([&] {
+  try {
     switch (type) {
       case v8::PromiseHookType::kInit: {
         // The kInit event is triggered by v8 when a deferred Promise is created. This
@@ -289,9 +289,20 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
         break;
       }
     }
-  }, [isolate](Value&& exception) {
-    isolate->ThrowException(exception.getHandle(isolate));
-  });
+  } catch (JsExceptionThrown&) {
+    // Catching JsExceptionThrown implies that an exception is already scheduled on the isolate
+    // so we don't need to throw it again, just allow it to bubble up and out.
+  } catch (std::exception& ex) {
+    // This case is purely defensive and is included really just to align with the
+    // semantics in LiftKj. We'd be using LiftKj here already if that didn't require
+    // use of a FunctionCallbackInfo.
+    throwInternalError(isolate, ex.what());
+  } catch (kj::Exception& ex) {
+    throwInternalError(isolate, kj::mv(ex));
+  } catch (...) {
+    throwInternalError(isolate, kj::str("caught unknown exception of type: ",
+                                        kj::getCaughtExceptionType()));
+  }
 }
 
 }  // namespace workerd::jsg

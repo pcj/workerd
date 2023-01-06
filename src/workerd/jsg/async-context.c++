@@ -217,6 +217,10 @@ void IsolateBase::popAsyncFrame() {
 }
 
 void IsolateBase::setAsyncContextTrackingEnabled() {
+  // Enabling async context tracking installs a relatively expensive callback on the v8 isolate
+  // that attaches additional metadata to every promise created. The additional metadata is used
+  // to implement support for the Node.js AsyncLocalStorage API. Since that is the only current
+  // use for it, we only install the promise hook when that api is used.
   if (asyncContextTrackingEnabled) return;
   asyncContextTrackingEnabled = true;
   ptr->SetPromiseHook(&promiseHook);
@@ -245,6 +249,11 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
   if (isolate->IsExecutionTerminating() || isolate->IsDead()) {
     return;
   }
+
+  // This is a fairly expensive method. It is invoked at least once, and a most
+  // four times for every JavaScript promise that is created within an isolate.
+  // Accordingly, the hook is only installed when the AsyncLocalStorage API is
+  // used.
 
   auto& js = Lock::from(isolate);
   auto& isolateBase = IsolateBase::from(isolate);

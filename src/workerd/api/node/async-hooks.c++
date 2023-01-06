@@ -6,7 +6,8 @@
 
 namespace workerd::api::node {
 
-jsg::Ref<AsyncLocalStorage> AsyncLocalStorage::constructor() {
+jsg::Ref<AsyncLocalStorage> AsyncLocalStorage::constructor(jsg::Lock& js) {
+  js.setAsyncContextTrackingEnabled();
   return jsg::alloc<AsyncLocalStorage>();
 }
 
@@ -62,6 +63,7 @@ jsg::Ref<AsyncResource> AsyncResource::constructor(
     jsg::Lock& js,
     jsg::Optional<kj::String> type,
     jsg::Optional<Options> options) {
+  js.setAsyncContextTrackingEnabled();
   // The type and options are required as part of the Node.js API compatibility
   // but our implementation does not currently make use of them at all. It is ok
   // for us to silently ignore both here.

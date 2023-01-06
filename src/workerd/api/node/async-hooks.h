@@ -33,7 +33,7 @@ public:
   AsyncLocalStorage() : key(kj::refcounted<jsg::AsyncContextFrame::StorageKey>()) {}
   ~AsyncLocalStorage() noexcept(false) { key->reset(); }
 
-  static jsg::Ref<AsyncLocalStorage> constructor();
+  static jsg::Ref<AsyncLocalStorage> constructor(jsg::Lock& js);
 
   v8::Local<v8::Value> run(jsg::Lock& js,
                            v8::Local<v8::Value> store,

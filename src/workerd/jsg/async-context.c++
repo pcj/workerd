@@ -221,6 +221,10 @@ void IsolateBase::promiseHook(v8::PromiseHookType type,
 
   const auto isRejected = [&] { return promise->State() == v8::Promise::PromiseState::kRejected; };
 
+  // TODO(later): The try/catch block here echoes the semantics of LiftKj.
+  // We don't use LiftKj here because that currently requires a FunctionCallbackInfo,
+  // which we don't have (or want here). If we end up needing this pattern elsewhere,
+  // we can implement a variant of LiftKj that does so and switch this over to use it.
   try {
     switch (type) {
       case v8::PromiseHookType::kInit: {
